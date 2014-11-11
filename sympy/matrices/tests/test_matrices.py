@@ -3,7 +3,7 @@ import collections
 from sympy import (
     Abs, E, Float, I, Integer, Max, Min, N, Poly, Pow, PurePoly, Rational,
     S, Symbol, cos, exp, oo, pi, signsimp, simplify, sin, sqrt, symbols,
-    sympify, trigsimp)
+    sympify, trigsimp, sstr)
 from sympy.matrices.matrices import (ShapeError, MatrixError,
     NonSquareMatrixError, DeferredVector)
 from sympy.matrices import (
@@ -11,9 +11,9 @@ from sympy.matrices import (
     SparseMatrix, casoratian, diag, eye, hessian,
     matrix_multiply_elementwise, ones, randMatrix, rot_axis1, rot_axis2,
     rot_axis3, wronskian, zeros)
-from sympy.core.compatibility import long, iterable
+from sympy.core.compatibility import long, iterable, u
 from sympy.utilities.iterables import flatten, capture
-from sympy.utilities.pytest import raises, XFAIL, slow
+from sympy.utilities.pytest import raises, XFAIL, slow, skip
 
 from sympy.abc import x, y, z
 
@@ -764,7 +764,6 @@ def test_wronskian():
 
 
 def test_eigen():
-
     R = Rational
 
     assert eye(3).charpoly(x) == Poly((x - 1)**3, x)
@@ -793,6 +792,12 @@ def test_eigen():
             ( 0, 1, [Matrix([0, -1, 1])]),
             ( 2, 1, [Matrix([R(2, 3), R(1, 3), 1])])
         ])
+
+    a = Symbol('a')
+    M = Matrix([[a, 0],
+                [0, 1]])
+
+    assert M.eigenvals() == {a: 1, S.One: 1}
 
     M = Matrix([[1, -1],
                 [1,  3]])
@@ -1830,7 +1835,8 @@ def test_matrix_norm():
         # Check Triangle Inequality for all Pairs of Matrices
         for X in L:
             for Y in L:
-                assert X.norm(order) + Y.norm(order) >= (X + Y).norm(order)
+                assert simplify(X.norm(order) + Y.norm(order) >=
+                                (X + Y).norm(order))
         # Scalar multiplication linearity
         for M in [A, B, C, D]:
             if order in [2, -2]:
@@ -1863,7 +1869,8 @@ def test_matrix_norm():
         if order >= 1:  # Triangle InEq holds only for these norms
             for v in L:
                 for w in L:
-                    assert v.norm(order) + w.norm(order) >= (v + w).norm(order)
+                    assert simplify(v.norm(order) + w.norm(order) >=
+                                    (v + w).norm(order))
         # Linear to scalar multiplication
         if order in [1, 2, -1, -2, S.Infinity, S.NegativeInfinity]:
             for vec in L:
@@ -2122,6 +2129,12 @@ def test_issue_5964():
     assert str(Matrix([[1, 2], [3, 4]])) == 'Matrix([[1, 2], [3, 4]])'
 
 
+def test_issue_7604():
+    x, y = symbols(u("x y"))
+    assert sstr(Matrix([[x, 2*y], [y**2, x + 3]])) == \
+        'Matrix([\n[   x,   2*y],\n[y**2, x + 3]])'
+
+
 def test_is_Identity():
     assert eye(3).is_Identity
     assert eye(3).as_immutable().is_Identity
@@ -2375,3 +2388,28 @@ def test_issue_7201():
 def test_free_symbols():
     for M in ImmutableMatrix, ImmutableSparseMatrix, Matrix, SparseMatrix:
         assert M([[x], [0]]).free_symbols == set([x])
+
+def test_from_ndarray():
+    """See issue 7465."""
+    try:
+        from numpy import array
+    except ImportError:
+        skip('NumPy must be available to test creating matrices from ndarrays')
+
+    assert Matrix(array([1, 2, 3])) == Matrix([1, 2, 3])
+    assert Matrix(array([[1, 2, 3]])) == Matrix([[1, 2, 3]])
+    assert Matrix(array([[1, 2, 3], [4, 5, 6]])) == \
+        Matrix([[1, 2, 3], [4, 5, 6]])
+    assert Matrix(array([x, y, z])) == Matrix([x, y, z])
+    raises(NotImplementedError, lambda: Matrix(array([[
+        [1, 2], [3, 4]], [[5, 6], [7, 8]]])))
+
+def test_hermitian():
+    a = Matrix([[1, I], [-I, 1]])
+    assert a.is_hermitian
+    a[0, 0] = 2*I
+    assert a.is_hermitian is False
+    a[0, 0] = x
+    assert a.is_hermitian is None
+    a[0, 1] = a[1, 0]*I
+    assert a.is_hermitian is False

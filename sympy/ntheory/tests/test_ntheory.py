@@ -1,7 +1,7 @@
 from collections import defaultdict
 from sympy import Sieve, binomial_coefficients, binomial_coefficients_list, \
     multinomial_coefficients, Mul, S, Pow, sieve, Symbol, summation, Dummy, \
-    factorial as fac, pi, GoldenRatio as phi
+    factorial as fac, pi, GoldenRatio as phi, sqrt
 from sympy.core.numbers import Integer, igcd, Rational
 from sympy.core.compatibility import long
 
@@ -11,17 +11,20 @@ from sympy.ntheory import isprime, n_order, is_primitive_root, \
     primerange, primepi, prime, pollard_rho, perfect_power, multiplicity, \
     trailing, divisor_count, primorial, pollard_pm1, \
     sqrt_mod, primitive_root, quadratic_residues, is_nthpow_residue, \
-    nthroot_mod, sqrt_mod_iter, mobius
+    nthroot_mod, sqrt_mod_iter, mobius, divisor_sigma
 
 from sympy.ntheory.residue_ntheory import _primitive_root_prime_iter
-from sympy.ntheory.factor_ import smoothness, smoothness_p
+from sympy.ntheory.factor_ import smoothness, smoothness_p, \
+    antidivisors, antidivisor_count
 from sympy.ntheory.generate import cycle_length
 from sympy.ntheory.primetest import _mr_safe_helper, mr
 from sympy.ntheory.bbp_pi import pi_hex_digits
 from sympy.ntheory.modular import crt, crt1, crt2, solve_congruence
 from sympy.ntheory.continued_fraction import \
     (continued_fraction_periodic as cf_p,
-     continued_fraction_iterator as cf_i)
+     continued_fraction_iterator as cf_i,
+     continued_fraction_convergents as cf_c,
+     continued_fraction_reduce as cf_r)
 from sympy.ntheory.egyptian_fraction import egyptian_fraction
 
 from fractions import Fraction
@@ -299,6 +302,7 @@ def test_factorint():
     assert factorint(
         12345, limit=3) == {4115: 1, 3: 1}  # the 5 is greater than the limit
     assert factorint(1, limit=1) == {}
+    assert factorint(0, 3) == {0: 1}
     assert factorint(12, limit=1) == {12: 1}
     assert factorint(30, limit=2) == {2: 1, 15: 1}
     assert factorint(16, limit=2) == {2: 4}
@@ -389,6 +393,26 @@ def test_totient():
     assert totient(m)
     assert totient(m).subs(m, 3**10) == 3**10 - 3**9
     assert summation(totient(m), (m, 1, 11)) == 42
+
+
+def test_divisor_sigma():
+    assert [divisor_sigma(k) for k in range(1, 12)] == \
+        [1, 3, 4, 7, 6, 12, 8, 15, 13, 18, 12]
+    assert [divisor_sigma(k, 2) for k in range(1, 12)] == \
+        [1, 5, 10, 21, 26, 50, 50, 85, 91, 130, 122]
+    assert divisor_sigma(23450) == 50592
+    assert divisor_sigma(23450, 0) == 24
+    assert divisor_sigma(23450, 1) == 50592
+    assert divisor_sigma(23450, 2) == 730747500
+    assert divisor_sigma(23450, 3) == 14666785333344
+
+    m = Symbol("m", integer=True)
+    k = Symbol("k", integer=True)
+    assert divisor_sigma(m)
+    assert divisor_sigma(m, k)
+    assert divisor_sigma(m).subs(m, 3**10) == 88573
+    assert divisor_sigma(m, k).subs([(m, 3**10), (k, 3)]) == 213810021790597
+    assert summation(divisor_sigma(m), (m, 1, 11)) == 99
 
 
 def test_partitions():
@@ -652,6 +676,29 @@ def test_divisor_count():
     assert divisor_count(6) == 4
 
 
+def test_antidivisors():
+    assert antidivisors(-1) == []
+    assert antidivisors(-3) == [2]
+    assert antidivisors(14) == [3, 4, 9]
+    assert antidivisors(237) == [2, 5, 6, 11, 19, 25, 43, 95, 158]
+    assert antidivisors(12345) == [2, 6, 7, 10, 30, 1646, 3527, 4938, 8230]
+    assert antidivisors(393216) == [262144]
+    assert sorted(x for x in antidivisors(3*5*7, 1)) == \
+        [2, 6, 10, 11, 14, 19, 30, 42, 70]
+    assert antidivisors(1) == []
+
+
+def test_antidivisor_count():
+    assert antidivisor_count(0) == 0
+    assert antidivisor_count(-1) == 0
+    assert antidivisor_count(-4) == 1
+    assert antidivisor_count(20) == 3
+    assert antidivisor_count(25) == 5
+    assert antidivisor_count(38) == 7
+    assert antidivisor_count(180) == 6
+    assert antidivisor_count(2*3*5) == 3
+
+
 def test_primorial():
     assert primorial(1) == 2
     assert primorial(1, nth=0) == 1
@@ -770,6 +817,7 @@ def test_continued_fraction():
     assert cf_p(27, 32, 0) == [0, 1, 5, 2, 2]
     assert cf_p(1, 2, 5) == [[1]]
     assert cf_p(0, 1, 2) == [1, [2]]
+    assert cf_p(6, 7, 49) == [1, 1, 6]
     assert cf_p(3796, 1387, 0) == [2, 1, 2, 1, 4]
     assert cf_p(3245, 10000) == [0, 3, 12, 4, 13]
     assert cf_p(1932, 2568) == [0, 1, 3, 26, 2]
@@ -785,6 +833,22 @@ def test_continued_fraction():
 
     assert take(phi) == [1, 1, 1, 1, 1, 1, 1]
     assert take(pi) == [3, 7, 15, 1, 292, 1, 1]
+
+    assert list(cf_i(S(17)/12)) == [1, 2, 2, 2]
+    assert list(cf_i(S(-17)/12)) == [-2, 1, 1, 2, 2]
+
+    assert list(cf_c([1, 6, 1, 8])) == [S(1), S(7)/6, S(8)/7, S(71)/62]
+    assert list(cf_c([2])) == [S(2)]
+    assert list(cf_c([1, 1, 1, 1, 1, 1, 1])) == [S.One, S(2), S(3)/2, S(5)/3,
+                                                 S(8)/5, S(13)/8, S(21)/13]
+    assert list(cf_c([1, 6, S(-1)/2, 4])) == [S.One, S(7)/6, S(5)/4, S(3)/2]
+
+    assert cf_r([1, 6, 1, 8]) == S(71)/62
+    assert cf_r([3]) == S(3)
+    assert cf_r([-1, 5, 1, 4]) == S(-24)/29
+    assert (cf_r([0, 1, 1, 7, [24, 8]]) - (sqrt(3) + 2)/7).expand() == 0
+    assert cf_r([1, 5, 9]) == S(55)/46
+    assert (cf_r([[1]]) - (sqrt(5) + 1)/2).expand() == 0
 
 
 def test_egyptian_fraction():
@@ -804,3 +868,13 @@ def test_egyptian_fraction():
         [6, 7, 8, 9, 10, 42, 43, 44, 45, 56, 57, 58, 72, 73, 90, 1806, 1807,
          1808, 1892, 1893, 1980, 3192, 3193, 3306, 5256, 3263442, 3263443,
          3267056, 3581556, 10192056, 10650056950806]
+    assert egyptian_fraction(Rational(5, 6), "Golomb") == [2, 6, 12, 20, 30]
+    assert egyptian_fraction(Rational(5, 121), "Golomb") == [25, 1225, 3577, 7081, 11737]
+    raises(ValueError, lambda: egyptian_fraction(Rational(-4, 9)))
+    assert egyptian_fraction(Rational(8, 3), "Golomb") == [1, 2, 3, 4, 5, 6, 7,
+                                                           14, 574, 2788, 6460,
+                                                           11590, 33062, 113820]
+    assert egyptian_fraction(Rational(355, 113)) == [1, 2, 3, 4, 5, 6, 7, 8, 9,
+                                                     10, 11, 12, 27, 744, 893588,
+                                                     1251493536607,
+                                                     20361068938197002344405230]

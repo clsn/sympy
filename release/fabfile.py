@@ -30,7 +30,7 @@ Do not enforce any naming conventions on the release branch. By tradition, the
 name of the release branch is the same as the version being released (like
 0.7.3), but this is not required. Use get_sympy_version() and
 get_sympy_short_version() to get the SymPy version (the SymPy __version__
-*must* be changed in __init__.py for this to work).
+*must* be changed in sympy/release.py for this to work).
 """
 from __future__ import print_function
 
@@ -138,7 +138,7 @@ def prepare_apt():
     sudo("apt-get -qq update")
     sudo("apt-get -y install git python3 make python-virtualenv zip python-dev")
     # Needed to build the docs
-    sudo("apt-get -y install graphviz inkscape texlive texlive-xetex texlive-fonts-recommended texlive-latex-extra librsvg2-bin")
+    sudo("apt-get -y install graphviz inkscape texlive texlive-xetex texlive-fonts-recommended texlive-latex-extra librsvg2-bin docbook2x")
     # Our Ubuntu is too old to include Python 3.3
     sudo("apt-get -y install python-software-properties")
     sudo("add-apt-repository -y ppa:fkrull/deadsnakes")
@@ -303,6 +303,7 @@ def build_docs():
             with cd("/home/vagrant/repos/sympy/doc"):
                 run("make clean")
                 run("make html-errors")
+                run("make man")
                 with cd("/home/vagrant/repos/sympy/doc/_build"):
                     run("mv html {html-nozip}".format(**tarball_formatter()))
                     run("zip -9lr {html} {html-nozip}".format(**tarball_formatter()))
@@ -381,7 +382,6 @@ git_whitelist = {
     'bin/coverage_report.py',
     'bin/diagnose_imports',
     'bin/doctest',
-    'bin/generate_test_list.py',
     'bin/get_sympy.py',
     'bin/py.bench',
     'bin/mailmap_update.py',

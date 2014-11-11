@@ -10,9 +10,12 @@ from sympy.core.numbers import Float
 from sympy.core.compatibility import iterable, with_metaclass, ordered
 from sympy.core.evaluate import global_evaluate
 from sympy.core.decorators import deprecated
+from sympy.core.mul import Mul
+from sympy.core.relational import Eq
+from sympy.sets.contains import Contains
 
 from sympy.mpmath import mpi, mpf
-from sympy.logic.boolalg import And, Or, true, false
+from sympy.logic.boolalg import And, Or, Not, true, false
 from sympy.utilities import default_sort_key, subsets
 
 
@@ -38,23 +41,27 @@ class Set(Basic):
     is_Intersection = None
     is_EmptySet = None
     is_UniversalSet = None
+    is_Complement = None
 
-    def sort_key(self, order=None):
+    @staticmethod
+    def _infimum_key(expr):
         """
-        Give sort_key of infimum (if possible) else sort_key of the set.
+        Return infimum (if possible) else S.Infinity.
         """
         try:
-            infimum = self.inf
-            if infimum.is_comparable:
-                return default_sort_key(infimum, order)
-        except (NotImplementedError, ValueError):
-            pass
-        args = tuple([default_sort_key(a, order) for a in self._sorted_args])
-        return self.class_key(), (len(args), args), S.One.class_key(), S.One
+            infimum = expr.inf
+            assert infimum.is_comparable
+        except (NotImplementedError,
+                AttributeError, AssertionError, ValueError):
+            infimum = S.Infinity
+        return infimum
 
     def union(self, other):
         """
         Returns the union of 'self' and 'other'.
+
+        Examples
+        ========
 
         As a shortcut it is possible to use the '+' operator:
 
@@ -112,6 +119,9 @@ class Set(Basic):
         """
         Returns True if 'self' and 'other' are disjoint
 
+        Examples
+        ========
+
         >>> from sympy import Interval
         >>> Interval(0, 2).is_disjoint(Interval(1, 2))
         False
@@ -121,7 +131,7 @@ class Set(Basic):
         References
         ==========
 
-        http://en.wikipedia.org/wiki/Disjoint_sets
+        .. [1] http://en.wikipedia.org/wiki/Disjoint_sets
         """
         return self.intersect(other) == S.EmptySet
 
@@ -145,36 +155,65 @@ class Set(Basic):
         """
         return None
 
-    @property
-    def complement(self):
+    def complement(self, universe):
         """
-        The complement of 'self'.
+        The complement of 'self' w.r.t the given the universe.
 
-        As a shortcut it is possible to use the '~' or '-' operators:
+        Examples
+        ========
 
-        >>> from sympy import Interval
+        >>> from sympy import Interval, S
+        >>> Interval(0, 1).complement(S.Reals)
+        (-oo, 0) U (1, oo)
 
-        >>> Interval(0, 1).complement
-        (-oo, 0) U (1, oo)
-        >>> ~Interval(0, 1)
-        (-oo, 0) U (1, oo)
-        >>> -Interval(0, 1)
-        (-oo, 0) U (1, oo)
+        >>> Interval(0, 1).complement(S.UniversalSet)
+        UniversalSet() \ [0, 1]
 
         """
-        return self._complement
+        return Complement(universe, self)
 
-    @property
-    def _complement(self):
-        raise NotImplementedError("(%s)._complement" % self)
+    def _complement(self, other):
+        # this behaves as other - self
+        if isinstance(other, ProductSet):
+            # For each set consider it or it's complement
+            # We need at least one of the sets to be complemented
+            # Consider all 2^n combinations.
+            # We can conveniently represent these options easily using a ProductSet
+
+            # XXX: this doesn't work if the dimentions of the sets isn't same.
+            # A - B is essentially same as A if B has a different
+            # dimentionality than A
+            switch_sets = ProductSet(FiniteSet(o, o - s) for s, o in
+                                     zip(self.sets, other.sets))
+            product_sets = (ProductSet(*set) for set in switch_sets)
+            # Union of all combinations but this one
+            return Union(p for p in product_sets if p != other)
+
+        elif isinstance(other, Interval):
+            if isinstance(self, Interval) or isinstance(self, FiniteSet):
+                return Intersection(other, self.complement(S.Reals))
+
+        elif isinstance(other, Union):
+            return Union(o - self for o in other.args)
+
+        elif isinstance(other, Complement):
+            return Complement(other.args[0], Union(other.args[1], self))
+
+        elif isinstance(other, EmptySet):
+            return S.EmptySet
+
+        elif isinstance(other, FiniteSet):
+            return FiniteSet(*[el for el in other if self.contains(el) != True])
 
     @property
     def inf(self):
         """
         The infimum of 'self'
 
-        >>> from sympy import Interval, Union
+        Examples
+        ========
 
+        >>> from sympy import Interval, Union
         >>> Interval(0, 1).inf
         0
         >>> Union(Interval(0, 1), Interval(2, 3)).inf
@@ -192,8 +231,10 @@ class Set(Basic):
         """
         The supremum of 'self'
 
-        >>> from sympy import Interval, Union
+        Examples
+        ========
 
+        >>> from sympy import Interval, Union
         >>> Interval(0, 1).sup
         1
         >>> Union(Interval(0, 1), Interval(2, 3)).sup
@@ -212,19 +253,20 @@ class Set(Basic):
 
         As a shortcut it is possible to use the 'in' operator:
 
-        >>> from sympy import Interval
+        Examples
+        ========
 
+        >>> from sympy import Interval
         >>> Interval(0, 1).contains(0.5)
         True
         >>> 0.5 in Interval(0, 1)
         True
 
         """
-        c = self._contains(sympify(other, strict=True))
-        if c in (true, false):
-            # TODO: would we want to return the Basic type here?
-            return bool(c)
-        return c
+        ret = self._contains(sympify(other, strict=True))
+        if ret is None:
+            ret = Contains(other, self, evaluate=False)
+        return ret
 
     def _contains(self, other):
         raise NotImplementedError("(%s)._contains(%s)" % (self, other))
@@ -239,6 +281,9 @@ class Set(Basic):
     def is_subset(self, other):
         """
         Returns True if 'self' is a subset of 'other'.
+
+        Examples
+        ========
 
         >>> from sympy import Interval
         >>> Interval(0, 0.5).is_subset(Interval(0, 1))
@@ -262,6 +307,9 @@ class Set(Basic):
         """
         Returns True if 'self' is a proper subset of 'other'.
 
+        Examples
+        ========
+
         >>> from sympy import Interval
         >>> Interval(0, 0.5).is_proper_subset(Interval(0, 1))
         True
@@ -277,6 +325,9 @@ class Set(Basic):
     def is_superset(self, other):
         """
         Returns True if 'self' is a superset of 'other'.
+
+        Examples
+        ========
 
         >>> from sympy import Interval
         >>> Interval(0, 0.5).is_superset(Interval(0, 1))
@@ -299,6 +350,9 @@ class Set(Basic):
     def is_proper_superset(self, other):
         """
         Returns True if 'self' is a proper superset of 'other'.
+
+        Examples
+        ========
 
         >>> from sympy import Interval
         >>> Interval(0, 1).is_proper_superset(Interval(0, 0.5))
@@ -323,11 +377,9 @@ class Set(Basic):
         ========
 
         >>> from sympy import FiniteSet, EmptySet
-
         >>> A = EmptySet()
         >>> A.powerset()
         {EmptySet()}
-
         >>> A = FiniteSet(1, 2)
         >>> A.powerset() == FiniteSet(FiniteSet(1), FiniteSet(2), FiniteSet(1, 2), EmptySet())
         True
@@ -335,7 +387,7 @@ class Set(Basic):
         References
         ==========
 
-        http://en.wikipedia.org/wiki/Power_set
+        .. [1] http://en.wikipedia.org/wiki/Power_set
 
         """
         return self._eval_powerset()
@@ -345,8 +397,10 @@ class Set(Basic):
         """
         The (Lebesgue) measure of 'self'
 
-        >>> from sympy import Interval, Union
+        Examples
+        ========
 
+        >>> from sympy import Interval, Union
         >>> Interval(0, 1).measure
         1
         >>> Union(Interval(0, 1), Interval(2, 3)).measure
@@ -374,10 +428,12 @@ class Set(Basic):
         For example, the boundary of an interval is its start and end points.
         This is true regardless of whether or not the interval is open.
 
+        Examples
+        ========
+
         >>> from sympy import Interval
         >>> Interval(0, 1).boundary
         {0, 1}
-
         >>> Interval(0, 1, True, False).boundary
         {0, 1}
         """
@@ -432,23 +488,16 @@ class Set(Basic):
         return ProductSet([self]*exp)
 
     def __sub__(self, other):
-        return self.intersect(other.complement)
-
-    def __neg__(self):
-        return self.complement
-
-    def __invert__(self):
-        return self.complement
+        return Complement(self, other)
 
     def __contains__(self, other):
-        from sympy.assumptions import ask
         symb = self.contains(other)
-        result = ask(symb)
-        if result is None:
+        if symb not in (true, false):
             raise TypeError('contains did not evaluate to a bool: %r' % symb)
-        return result
+        return bool(symb)
 
     @property
+    @deprecated(useinstead="is_subset(Reals)", issue=6212, deprecated_since_version="0.7.6")
     def is_real(self):
         return None
 
@@ -465,31 +514,32 @@ class ProductSet(Set):
     Examples
     ========
 
-        >>> from sympy import Interval, FiniteSet, ProductSet
+    >>> from sympy import Interval, FiniteSet, ProductSet
+    >>> I = Interval(0, 5); S = FiniteSet(1, 2, 3)
+    >>> ProductSet(I, S)
+    [0, 5] x {1, 2, 3}
 
-        >>> I = Interval(0, 5); S = FiniteSet(1, 2, 3)
-        >>> ProductSet(I, S)
-        [0, 5] x {1, 2, 3}
+    >>> (2, 2) in ProductSet(I, S)
+    True
 
-        >>> (2, 2) in ProductSet(I, S)
-        True
+    >>> Interval(0, 1) * Interval(0, 1) # The unit square
+    [0, 1] x [0, 1]
 
-        >>> Interval(0, 1) * Interval(0, 1) # The unit square
-        [0, 1] x [0, 1]
-
-        >>> coin = FiniteSet('H', 'T')
-        >>> set(coin**2)
-        set([(H, H), (H, T), (T, H), (T, T)])
+    >>> coin = FiniteSet('H', 'T')
+    >>> set(coin**2)
+    set([(H, H), (H, T), (T, H), (T, T)])
 
 
     Notes
     =====
+
     - Passes most operations down to the argument sets
     - Flattens Products of ProductSets
 
     References
     ==========
-    http://en.wikipedia.org/wiki/Cartesian_product
+
+    .. [1] http://en.wikipedia.org/wiki/Cartesian_product
     """
     is_ProductSet = True
 
@@ -513,12 +563,23 @@ class ProductSet(Set):
 
         return Basic.__new__(cls, *sets, **assumptions)
 
+    def _eval_Eq(self, other):
+        if not other.is_ProductSet:
+            return
+
+        if len(self.args) != len(other.args):
+            return false
+
+        return And(*map(lambda x, y: Eq(x, y), self.args, other.args))
+
     def _contains(self, element):
         """
         'in' operator for ProductSets
 
-        >>> from sympy import Interval
+        Examples
+        ========
 
+        >>> from sympy import Interval
         >>> (2, 3) in Interval(0, 5) * Interval(0, 5)
         True
 
@@ -529,9 +590,9 @@ class ProductSet(Set):
         """
         try:
             if len(element) != len(self.args):
-                return False
+                return false
         except TypeError:  # maybe element isn't an iterable
-            return False
+            return false
         return And(*[set.contains(item) for set, item in zip(self.sets, element)])
 
     def _intersect(self, other):
@@ -565,17 +626,6 @@ class ProductSet(Set):
         return self.args
 
     @property
-    def _complement(self):
-        # For each set consider it or it's complement
-        # We need at least one of the sets to be complemented
-        # Consider all 2^n combinations.
-        # We can conveniently represent these options easily using a ProductSet
-        switch_sets = ProductSet(FiniteSet(s, s.complement) for s in self.sets)
-        product_sets = (ProductSet(*set) for set in switch_sets)
-        # Union of all combinations but this one
-        return Union(p for p in product_sets if p != self)
-
-    @property
     def _boundary(self):
         return Union(ProductSet(b + b.boundary if i != j else b.boundary
                                 for j, b in enumerate(self.sets))
@@ -583,6 +633,7 @@ class ProductSet(Set):
 
 
     @property
+    @deprecated(useinstead="is_subset(Reals)", issue=6212, deprecated_since_version="0.7.6")
     def is_real(self):
         return all(set.is_real for set in self.sets)
 
@@ -603,6 +654,9 @@ class ProductSet(Set):
             measure *= set.measure
         return measure
 
+    def __len__(self):
+        return Mul(*[len(s) for s in self.args])
+
 
 class Interval(Set, EvalfMixin):
     """
@@ -619,7 +673,6 @@ class Interval(Set, EvalfMixin):
     ========
 
     >>> from sympy import Symbol, Interval
-
     >>> Interval(0, 1)
     [0, 1]
     >>> Interval(0, 1, False, True)
@@ -639,10 +692,14 @@ class Interval(Set, EvalfMixin):
     References
     ==========
 
-    http://en.wikipedia.org/wiki/Interval_(mathematics)
+    .. [1] http://en.wikipedia.org/wiki/Interval_%28mathematics%29
     """
     is_Interval = True
-    is_real = True
+
+    @property
+    @deprecated(useinstead="is_subset(Reals)", issue=6212, deprecated_since_version="0.7.6")
+    def is_real(self):
+        return True
 
     def __new__(cls, start, end, left_open=False, right_open=False):
 
@@ -686,8 +743,10 @@ class Interval(Set, EvalfMixin):
 
         This property takes the same value as the 'inf' property.
 
-        >>> from sympy import Interval
+        Examples
+        ========
 
+        >>> from sympy import Interval
         >>> Interval(0, 1).start
         0
 
@@ -703,8 +762,10 @@ class Interval(Set, EvalfMixin):
 
         This property takes the same value as the 'sup' property.
 
-        >>> from sympy import Interval
+        Examples
+        ========
 
+        >>> from sympy import Interval
         >>> Interval(0, 1).end
         1
 
@@ -718,8 +779,10 @@ class Interval(Set, EvalfMixin):
         """
         True if 'self' is left-open.
 
-        >>> from sympy import Interval
+        Examples
+        ========
 
+        >>> from sympy import Interval
         >>> Interval(0, 1, left_open=True).left_open
         True
         >>> Interval(0, 1, left_open=False).left_open
@@ -733,8 +796,10 @@ class Interval(Set, EvalfMixin):
         """
         True if 'self' is right-open.
 
-        >>> from sympy import Interval
+        Examples
+        ========
 
+        >>> from sympy import Interval
         >>> Interval(0, 1, right_open=True).right_open
         True
         >>> Interval(0, 1, right_open=False).right_open
@@ -790,6 +855,17 @@ class Interval(Set, EvalfMixin):
 
         return Interval(start, end, left_open, right_open)
 
+
+    def _complement(self, other):
+        if other is S.Reals:
+            a = Interval(S.NegativeInfinity, self.start,
+                         True, not self.left_open)
+            b = Interval(self.end, S.Infinity, not self.right_open, True)
+            return Union(a, b)
+
+        return Set._complement(self, other)
+
+
     def _union(self, other):
         """
         This function should only be used internally
@@ -816,8 +892,8 @@ class Interval(Set, EvalfMixin):
                 return Interval(start, end, left_open, right_open)
 
         # If I have open end points and these endpoints are contained in other
-        if ((self.left_open and other.contains(self.start) is True) or
-                (self.right_open and other.contains(self.end) is True)):
+        if ((self.left_open and other.contains(self.start) is true) or
+                (self.right_open and other.contains(self.end) is true)):
             # Fill in my end points and return
             open_left = self.left_open and self.start not in other
             open_right = self.right_open and self.end not in other
@@ -827,16 +903,13 @@ class Interval(Set, EvalfMixin):
         return None
 
     @property
-    def _complement(self):
-        a = Interval(S.NegativeInfinity, self.start, True, not self.left_open)
-        b = Interval(self.end, S.Infinity, not self.right_open, True)
-        return Union(a, b)
-
-    @property
     def _boundary(self):
         return FiniteSet(self.start, self.end)
 
     def _contains(self, other):
+        if other.is_real is False:
+            return false
+
         if self.left_open:
             expr = other > self.start
         else:
@@ -847,7 +920,7 @@ class Interval(Set, EvalfMixin):
         else:
             expr = And(expr, other <= self.end)
 
-        return expr
+        return _sympify(expr)
 
     def _eval_imageset(self, f):
         from sympy.functions.elementary.miscellaneous import Min, Max
@@ -958,6 +1031,19 @@ class Interval(Set, EvalfMixin):
             left = self.start <= other
         return And(left, right)
 
+    def _eval_Eq(self, other):
+        if not other.is_Interval:
+            if (other.is_Union or other.is_Complement or
+                other.is_Intersection or other.is_ProductSet):
+                return
+
+            return false
+
+        return And(Eq(self.left, other.left),
+                   Eq(self.right, other.right),
+                   self.left_open == other.left_open,
+                   self.right_open == other.right_open)
+
 
 class Union(Set, EvalfMixin):
     """
@@ -966,24 +1052,25 @@ class Union(Set, EvalfMixin):
     Examples
     ========
 
-        >>> from sympy import Union, Interval
+    >>> from sympy import Union, Interval
+    >>> Union(Interval(1, 2), Interval(3, 4))
+    [1, 2] U [3, 4]
 
-        >>> Union(Interval(1, 2), Interval(3, 4))
-        [1, 2] U [3, 4]
+    The Union constructor will always try to merge overlapping intervals,
+    if possible. For example:
 
-        The Union constructor will always try to merge overlapping intervals,
-        if possible. For example:
-
-        >>> Union(Interval(1, 2), Interval(2, 3))
-        [1, 3]
+    >>> Union(Interval(1, 2), Interval(2, 3))
+    [1, 3]
 
     See Also
     ========
+
     Intersection
 
     References
     ==========
-    http://en.wikipedia.org/wiki/Union_(set_theory)
+
+    .. [1] http://en.wikipedia.org/wiki/Union_%28set_theory%29
     """
     is_Union = True
 
@@ -1008,11 +1095,11 @@ class Union(Set, EvalfMixin):
         if len(args) == 0:
             return S.EmptySet
 
-        args = sorted(args, key=default_sort_key)
-
         # Reduce sets using known rules
         if evaluate:
             return Union.reduce(args)
+
+        args = list(ordered(args, Set._infimum_key))
 
         return Basic.__new__(cls, *args)
 
@@ -1032,7 +1119,8 @@ class Union(Set, EvalfMixin):
         # Merge all finite sets
         finite_sets = [x for x in args if x.is_FiniteSet]
         if len(finite_sets) > 1:
-            finite_set = FiniteSet(x for set in finite_sets for x in set)
+            a = (x for set in finite_sets for x in set)
+            finite_set = FiniteSet(*a)
             args = [finite_set] + [x for x in args if not x.is_FiniteSet]
 
         # ===== Pair-wise Rules =====
@@ -1060,6 +1148,10 @@ class Union(Set, EvalfMixin):
         else:
             return Union(args, evaluate=False)
 
+    def complement(self, universe):
+        # DeMorgan's Law
+        return Intersection(s.complement(universe) for s in self.args)
+
     @property
     def _inf(self):
         # We use Min so that sup is meaningful in combination with symbolic
@@ -1073,14 +1165,6 @@ class Union(Set, EvalfMixin):
         # end points.
         from sympy.functions.elementary.miscellaneous import Max
         return Max(*[set.sup for set in self.args])
-
-    @property
-    def _complement(self):
-        # De Morgan's formula.
-        complement = self.args[0].complement
-        for set in self.args[1:]:
-            complement = complement.intersect(set.complement)
-        return complement
 
     def _contains(self, other):
         or_args = [the_set.contains(other) for the_set in self.args]
@@ -1155,17 +1239,34 @@ class Union(Set, EvalfMixin):
     def _eval_evalf(self, prec):
         try:
             return Union(set.evalf() for set in self.args)
-        except:
+        except Exception:
             raise TypeError("Not all sets are evalf-able")
 
     def __iter__(self):
         import itertools
+
+        # roundrobin recipe taken from itertools documentation:
+        # https://docs.python.org/2/library/itertools.html#recipes
+        def roundrobin(*iterables):
+            "roundrobin('ABC', 'D', 'EF') --> A D E B F C"
+            # Recipe credited to George Sakkis
+            pending = len(iterables)
+            nexts = itertools.cycle(iter(it).next for it in iterables)
+            while pending:
+                try:
+                    for next in nexts:
+                        yield next()
+                except StopIteration:
+                    pending -= 1
+                    nexts = itertools.cycle(itertools.islice(nexts, pending))
+
         if all(set.is_iterable for set in self.args):
-            return itertools.chain(*(iter(arg) for arg in self.args))
+            return roundrobin(*(iter(arg) for arg in self.args))
         else:
             raise TypeError("Not all constituent sets are iterable")
 
     @property
+    @deprecated(useinstead="is_subset(Reals)", issue=6212, deprecated_since_version="0.7.6")
     def is_real(self):
         return all(set.is_real for set in self.args)
 
@@ -1177,23 +1278,24 @@ class Intersection(Set):
     Examples
     ========
 
-        >>> from sympy import Intersection, Interval
+    >>> from sympy import Intersection, Interval
+    >>> Intersection(Interval(1, 3), Interval(2, 4))
+    [2, 3]
 
-        >>> Intersection(Interval(1, 3), Interval(2, 4))
-        [2, 3]
+    We often use the .intersect method
 
-        We often use the .intersect method
-
-        >>> Interval(1,3).intersect(Interval(2,4))
-        [2, 3]
+    >>> Interval(1,3).intersect(Interval(2,4))
+    [2, 3]
 
     See Also
     ========
+
     Union
 
     References
     ==========
-    http://en.wikipedia.org/wiki/Intersection_(set_theory)
+
+    .. [1] http://en.wikipedia.org/wiki/Intersection_%28set_theory%29
     """
     is_Intersection = True
 
@@ -1214,15 +1316,14 @@ class Intersection(Set):
             raise TypeError("Input must be Sets or iterables of Sets")
         args = flatten(args)
 
-        # Intersection of no sets is everything
         if len(args) == 0:
-            return S.UniversalSet
-
-        args = sorted(args, key=default_sort_key)
+            raise TypeError("Intersection expected at least one argument")
 
         # Reduce sets using known rules
         if evaluate:
             return Intersection.reduce(args)
+
+        args = list(ordered(args, Set._infimum_key))
 
         return Basic.__new__(cls, *args)
 
@@ -1236,10 +1337,6 @@ class Intersection(Set):
 
     @property
     def _sup(self):
-        raise NotImplementedError()
-
-    @property
-    def _complement(self):
         raise NotImplementedError()
 
     def _eval_imageset(self, f):
@@ -1279,15 +1376,24 @@ class Intersection(Set):
         # all other sets in the intersection
         for s in args:
             if s.is_FiniteSet:
-                return s.__class__(x for x in s
-                        if all(x in other for other in args))
+                return s.func(*[x for x in s
+                                if all(other.contains(x) == True for other in args)])
 
         # If any of the sets are unions, return a Union of Intersections
         for s in args:
             if s.is_Union:
                 other_sets = set(args) - set((s,))
-                other = Intersection(other_sets)
-                return Union(Intersection(arg, other) for arg in s.args)
+                if len(other_sets) > 0:
+                    other = Intersection(other_sets)
+                    return Union(Intersection(arg, other) for arg in s.args)
+                else:
+                    return Union(arg for arg in s.args)
+
+        for s in args:
+            if s.is_Complement:
+                other_sets = args + [s.args[0]]
+                other_sets.remove(s)
+                return Complement(Intersection(*other_sets), s.args[1])
 
         # At this stage we are guaranteed not to have any
         # EmptySets, FiniteSets, or Unions in the intersection
@@ -1320,6 +1426,61 @@ class Intersection(Set):
         return And(*[set.as_relational(symbol) for set in self.args])
 
 
+class Complement(Set, EvalfMixin):
+    """
+    Represents the set difference or relative complement of a set with another set.
+
+    `A - B = \{x \in A| x \\notin B\}`
+
+
+    Examples
+    ========
+
+    >>> from sympy import Complement, FiniteSet
+    >>> Complement(FiniteSet(0, 1, 2), FiniteSet(1))
+    {0, 2}
+
+    See Also
+    =========
+    Intersection, Union
+
+    References
+    ==========
+    http://mathworld.wolfram.com/SetComplement.html
+    """
+
+    is_Complement = True
+
+    def __new__(cls, a, b, evaluate=True):
+        if evaluate:
+            return Complement.reduce(a, b)
+
+        return Basic.__new__(cls, a, b)
+
+    @staticmethod
+    def reduce(A, B):
+        """
+        Simplify a :class:`Complement`.
+
+        """
+        if B == S.UniversalSet:
+            return EmptySet()
+
+        if isinstance(B, Union):
+            return Intersection(s.complement(A) for s in B.args)
+
+        result = B._complement(A)
+        if result != None:
+            return result
+        else:
+            return Complement(A, B, evaluate=False)
+
+    def _contains(self, other):
+        A = self.args[0]
+        B = self.args[1]
+        return And(A.contains(other), Not(B.contains(other)))
+
+
 class EmptySet(with_metaclass(Singleton, Set)):
     """
     Represents the empty set. The empty set is available as a singleton
@@ -1328,21 +1489,22 @@ class EmptySet(with_metaclass(Singleton, Set)):
     Examples
     ========
 
-        >>> from sympy import S, Interval
+    >>> from sympy import S, Interval
+    >>> S.EmptySet
+    EmptySet()
 
-        >>> S.EmptySet
-        EmptySet()
-
-        >>> Interval(1, 2).intersect(S.EmptySet)
-        EmptySet()
+    >>> Interval(1, 2).intersect(S.EmptySet)
+    EmptySet()
 
     See Also
     ========
+
     UniversalSet
 
     References
     ==========
-    http://en.wikipedia.org/wiki/Empty_set
+
+    .. [1] http://en.wikipedia.org/wiki/Empty_set
     """
     is_EmptySet = True
     is_FiniteSet = True
@@ -1351,15 +1513,11 @@ class EmptySet(with_metaclass(Singleton, Set)):
         return S.EmptySet
 
     @property
-    def _complement(self):
-        return S.UniversalSet
-
-    @property
     def _measure(self):
         return 0
 
     def _contains(self, other):
-        return False
+        return false
 
     def as_relational(self, symbol):
         return False
@@ -1377,11 +1535,12 @@ class EmptySet(with_metaclass(Singleton, Set)):
         return self
 
     def _eval_powerset(self):
-        return FiniteSet([self])
+        return FiniteSet(self)
 
     @property
     def _boundary(self):
         return self
+
 
 class UniversalSet(with_metaclass(Singleton, Set)):
     """
@@ -1391,21 +1550,22 @@ class UniversalSet(with_metaclass(Singleton, Set)):
     Examples
     ========
 
-        >>> from sympy import S, Interval
+    >>> from sympy import S, Interval
+    >>> S.UniversalSet
+    UniversalSet()
 
-        >>> S.UniversalSet
-        UniversalSet()
-
-        >>> Interval(1, 2).intersect(S.UniversalSet)
-        [1, 2]
+    >>> Interval(1, 2).intersect(S.UniversalSet)
+    [1, 2]
 
     See Also
     ========
+
     EmptySet
 
     References
     ==========
-    http://en.wikipedia.org/wiki/Universal_set
+
+    .. [1] http://en.wikipedia.org/wiki/Universal_set
     """
 
     is_UniversalSet = True
@@ -1413,8 +1573,7 @@ class UniversalSet(with_metaclass(Singleton, Set)):
     def _intersect(self, other):
         return other
 
-    @property
-    def _complement(self):
+    def complement(self, universal_set):
         return S.EmptySet
 
     @property
@@ -1422,7 +1581,7 @@ class UniversalSet(with_metaclass(Singleton, Set)):
         return S.Infinity
 
     def _contains(self, other):
-        return True
+        return true
 
     def as_relational(self, symbol):
         return True
@@ -1443,7 +1602,6 @@ class FiniteSet(Set, EvalfMixin):
     ========
 
     >>> from sympy import FiniteSet
-
     >>> FiniteSet(1, 2, 3, 4)
     {1, 2, 3, 4}
     >>> 3 in FiniteSet(1, 2, 3, 4)
@@ -1451,7 +1609,8 @@ class FiniteSet(Set, EvalfMixin):
 
     References
     ==========
-    http://en.wikipedia.org/wiki/Finite_set
+
+    .. [1] http://en.wikipedia.org/wiki/Finite_set
     """
     is_FiniteSet = True
     is_iterable = True
@@ -1459,9 +1618,6 @@ class FiniteSet(Set, EvalfMixin):
     def __new__(cls, *args, **kwargs):
         evaluate = kwargs.get('evaluate', global_evaluate[0])
         if evaluate:
-            if len(args) == 1 and iterable(args[0]):
-                args = args[0]
-
             args = list(map(sympify, args))
 
             if len(args) == 0:
@@ -1469,10 +1625,23 @@ class FiniteSet(Set, EvalfMixin):
         else:
             args = list(map(sympify, args))
 
-        args = list(ordered(frozenset(args)))
+        args = list(ordered(frozenset(tuple(args)), Set._infimum_key))
         obj = Basic.__new__(cls, *args)
         obj._elements = frozenset(args)
         return obj
+
+    def _eval_Eq(self, other):
+        if not other.is_FiniteSet:
+            if (other.is_Union or other.is_Complement or
+                other.is_Intersection or other.is_ProductSet):
+                return
+
+            return false
+
+        if len(self) != len(other):
+            return false
+
+        return And(*map(lambda x, y: Eq(x, y), self.args, other.args))
 
     def __iter__(self):
         return iter(self.args)
@@ -1487,6 +1656,27 @@ class FiniteSet(Set, EvalfMixin):
             return self.__class__(*(self._elements & other._elements))
         return self.__class__(el for el in self if el in other)
 
+    def _complement(self, other):
+        if other is S.Reals:
+            nums = sorted(m for m in self.args if m.is_number)
+            syms = [m for m in self.args if m.is_Symbol]
+            # Reals cannot contain elements other than numbers and symbols.
+
+            intervals = []  # Build up a list of intervals between the elements
+            if nums != []:
+                intervals += [Interval(S.NegativeInfinity, nums[0], True, True)]
+                for a, b in zip(nums[:-1], nums[1:]):
+                    intervals.append(Interval(a, b, True, True))  # open intervals
+                intervals.append(Interval(nums[-1], S.Infinity, True, True))
+
+            if syms != []:
+                return Complement(Union(intervals, evaluate=False), FiniteSet(*syms), evaluate=False)
+            else:
+                return Union(intervals, evaluate=False)
+
+        return Set._complement(self, other)
+
+
     def _union(self, other):
         """
         This function should only be used internally
@@ -1497,9 +1687,9 @@ class FiniteSet(Set, EvalfMixin):
             return FiniteSet(*(self._elements | other._elements))
 
         # If other set contains one of my elements, remove it from myself
-        if any(other.contains(x) is True for x in self):
+        if any(other.contains(x) is true for x in self):
             return set((
-                FiniteSet(x for x in self if other.contains(x) is not True),
+                FiniteSet(*[x for x in self if other.contains(x) is not true]),
                 other))
 
         return None
@@ -1511,45 +1701,29 @@ class FiniteSet(Set, EvalfMixin):
         Relies on Python's set class. This tests for object equality
         All inputs are sympified
 
-        >>> from sympy import FiniteSet
+        Examples
+        ========
 
+        >>> from sympy import FiniteSet
         >>> 1 in FiniteSet(1, 2)
         True
         >>> 5 in FiniteSet(1, 2)
         False
 
         """
-        return other in self._elements
+        r = false
+        for e in self._elements:
+            t = Eq(e, other, evaluate=True)
+            if isinstance(t, Eq):
+                t = t.simplify()
+            if t == true:
+                return t
+            elif t != false:
+                r = None
+        return r
 
     def _eval_imageset(self, f):
         return FiniteSet(*map(f, self))
-
-    @property
-    def _complement(self):
-        """
-        The complement of a real finite set is the Union of open Intervals
-        between the elements of the set.
-
-        >>> from sympy import FiniteSet
-        >>> FiniteSet(1, 2, 3).complement
-        (-oo, 1) U (1, 2) U (2, 3) U (3, oo)
-
-
-        """
-        if not all(elem.is_number for elem in self):
-            raise ValueError("%s: Complement not defined for symbolic inputs"
-                    % self)
-
-        # as there are only numbers involved, a straight sort is sufficient;
-        # default_sort_key is not needed
-        args = sorted(self.args)
-
-        intervals = []  # Build up a list of intervals between the elements
-        intervals += [Interval(S.NegativeInfinity, args[0], True, True)]
-        for a, b in zip(args[:-1], args[1:]):
-            intervals.append(Interval(a, b, True, True))  # open intervals
-        intervals.append(Interval(args[-1], S.Infinity, True, True))
-        return Union(intervals, evaluate=False)
 
     @property
     def _boundary(self):
@@ -1572,15 +1746,13 @@ class FiniteSet(Set, EvalfMixin):
     def __len__(self):
         return len(self.args)
 
-    def __sub__(self, other):
-        return FiniteSet(el for el in self if el not in other)
-
     def as_relational(self, symbol):
         """Rewrite a FiniteSet in terms of equalities and logic operators. """
         from sympy.core.relational import Eq
         return Or(*[Eq(symbol, elem) for elem in self])
 
     @property
+    @deprecated(useinstead="is_subset(Reals)", issue=6212, deprecated_since_version="0.7.6")
     def is_real(self):
         return all(el.is_real for el in self)
 
@@ -1588,7 +1760,7 @@ class FiniteSet(Set, EvalfMixin):
         return (hash(self) - hash(other))
 
     def _eval_evalf(self, prec):
-        return FiniteSet(elem.evalf(prec) for elem in self)
+        return FiniteSet(*[elem.evalf(prec) for elem in self])
 
     def _hashable_content(self):
         return (self._elements,)
@@ -1596,10 +1768,10 @@ class FiniteSet(Set, EvalfMixin):
     @property
     def _sorted_args(self):
         from sympy.utilities import default_sort_key
-        return sorted(self.args, key=default_sort_key)
+        return tuple(ordered(self.args, Set._infimum_key))
 
     def _eval_powerset(self):
-        return self.func(self.func(s) for s in subsets(self.args))
+        return self.func(*[self.func(*s) for s in subsets(self.args)])
 
     def __ge__(self, other):
         return other.is_subset(self)
@@ -1660,6 +1832,18 @@ def imageset(*args):
     set = args[-1]
 
     r = set._eval_imageset(f)
+    if isinstance(r, ImageSet):
+        f, set = r.args
+
+    if f.variables[0] == f.expr:
+        return set
+
+    if isinstance(set, ImageSet):
+        if len(set.lamda.variables) == 1 and len(f.variables) == 1:
+            return imageset(Lambda(set.lamda.variables[0],
+                                   f.expr.subs(f.variables[0], set.lamda.expr)),
+                            set.base_set)
+
     if r is not None:
         return r
 

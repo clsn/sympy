@@ -1,10 +1,12 @@
 import string
 
-from sympy import (bernoulli, Symbol, symbols, Dummy, S, Sum, Rational,
-                   oo, zoo, pi, I, simplify, expand_func, harmonic,
-                   bell, fibonacci, lucas, euler, catalan, binomial, gamma,
-                   sqrt, hyper, log, digamma, trigamma, polygamma, diff,
-                   EulerGamma, factorial, sin, cos, cot, cancel, zeta)
+from sympy import (
+    Symbol, symbols, Dummy, S, Sum, Rational, oo, zoo, pi, I, simplify,
+    expand_func, diff, EulerGamma, cancel)
+from sympy.functions import (
+    bernoulli, harmonic, bell, fibonacci, lucas, euler, catalan, binomial,
+    gamma, sqrt, hyper, log, digamma, trigamma, polygamma, factorial, sin,
+    cos, cot, zeta)
 
 from sympy.utilities.pytest import XFAIL, raises
 
@@ -173,6 +175,11 @@ def test_harmonic_rational():
         e = expand_func(h).doit()
         assert cancel(e/a) == 1
         assert h.n() == a.n()
+
+
+def test_harmonic_evalf():
+    assert str(harmonic(1.5).evalf(n=10)) == '1.280372306'
+    assert str(harmonic(1.5, 2).evalf(n=10)) == '1.154576311'  # issue 7443
 
 
 def test_harmonic_rewrite_polygamma():

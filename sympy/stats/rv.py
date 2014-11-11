@@ -228,7 +228,6 @@ class RandomSymbol(Expr):
             raise TypeError("pspace variable should be of type PSpace")
         return Basic.__new__(cls, pspace, symbol)
 
-    is_bounded = True
     is_finite = True
     is_Symbol = True
     is_Atom = True
@@ -239,9 +238,14 @@ class RandomSymbol(Expr):
     symbol = property(lambda self: self.args[1])
     name   = property(lambda self: self.symbol.name)
 
-    is_positive = property(lambda self: self.symbol.is_positive)
-    is_integer = property(lambda self: self.symbol.is_integer)
-    is_real = property(lambda self: self.symbol.is_real or self.pspace.is_real)
+    def _eval_is_positive(self):
+        return self.symbol.is_positive
+
+    def _eval_is_integer(self):
+        return self.symbol.is_integer
+
+    def _eval_is_real(self):
+        return self.symbol.is_real or self.pspace.is_real
 
     @property
     def is_commutative(self):
@@ -269,7 +273,7 @@ class ProductPSpace(PSpace):
             for value in space.values:
                 rs_space_dict[value] = space
 
-        symbols = FiniteSet(val.symbol for val in rs_space_dict.keys())
+        symbols = FiniteSet(*[val.symbol for val in rs_space_dict.keys()])
 
         # Overlapping symbols
         if len(symbols) < sum(len(space.symbols) for space in spaces):
@@ -296,7 +300,7 @@ class ProductPSpace(PSpace):
 
     @property
     def symbols(self):
-        return FiniteSet(val.symbol for val in self.rs_space_dict.keys())
+        return FiniteSet(*[val.symbol for val in self.rs_space_dict.keys()])
 
     @property
     def spaces(self):
@@ -347,7 +351,7 @@ class ProductDomain(RandomDomain):
                 domains2.append(domain)
             else:
                 domains2.extend(domain.domains)
-        domains2 = FiniteSet(domains2)
+        domains2 = FiniteSet(*domains2)
 
         if all(domain.is_Finite for domain in domains2):
             from sympy.stats.frv import ProductFiniteDomain
@@ -365,8 +369,8 @@ class ProductDomain(RandomDomain):
 
     @property
     def symbols(self):
-        return FiniteSet(sym for domain in self.domains
-                             for sym    in domain.symbols)
+        return FiniteSet(*[sym for domain in self.domains
+                               for sym    in domain.symbols])
 
     @property
     def domains(self):
@@ -381,7 +385,7 @@ class ProductDomain(RandomDomain):
         for domain in self.domains:
             # Collect the parts of this event which associate to this domain
             elem = frozenset([item for item in other
-                if item[0] in domain.symbols])
+                              if domain.symbols.contains(item[0]) == S.true])
             # Test this sub-event
             if elem not in domain:
                 return False
@@ -837,7 +841,7 @@ def sample_iter_lambdify(expr, condition=None, numsamples=S.Infinity, **kwargs):
         fn(*args)
         if condition:
             given_fn(*args)
-    except:
+    except Exception:
         raise TypeError("Expr/condition too complex for lambdify")
 
     def return_generator():

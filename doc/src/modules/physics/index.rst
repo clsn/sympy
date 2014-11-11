@@ -12,7 +12,6 @@ Contents
 .. toctree::
     :maxdepth: 3
 
-    gaussopt.rst
     hydrogen.rst
     matrices.rst
     paulialgebra.rst
@@ -26,3 +25,4 @@ Contents
     mechanics/index.rst
     quantum/index.rst
     optics/index.rst
+    unitsystems/index.rst

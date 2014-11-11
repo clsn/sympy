@@ -74,7 +74,7 @@ def seterr(divide=False):
 
 def _decimal_to_Rational_prec(dec):
     """Convert an ordinary decimal instance to a Rational."""
-    if not dec.is_finite():  # NOTE: this is_finite is not SymPy's
+    if not dec.is_finite():
         raise TypeError("dec must be finite, got %s." % dec)
     s, d, e = dec.as_tuple()
     prec = len(d)
@@ -216,13 +216,12 @@ class Number(AtomicExpr):
     """
     is_commutative = True
     is_number = True
+    is_Number = True
 
     __slots__ = []
 
     # Used to make max(x._prec, y._prec) return x._prec when only x is a float
     _prec = -1
-
-    is_Number = True
 
     def __new__(cls, *obj):
         if len(obj) == 1:
@@ -305,9 +304,6 @@ class Number(AtomicExpr):
             return -new
         return self  # there is no other possibility
 
-    def _eval_is_bounded(self):
-        return True
-
     def _eval_is_finite(self):
         return True
 
@@ -384,17 +380,33 @@ class Number(AtomicExpr):
             (self.__class__.__name__))
 
     def __lt__(self, other):
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s < %s" % (self, other))
         raise NotImplementedError('%s needs .__lt__() method' %
             (self.__class__.__name__))
 
     def __le__(self, other):
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s <= %s" % (self, other))
         raise NotImplementedError('%s needs .__le__() method' %
             (self.__class__.__name__))
 
     def __gt__(self, other):
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s > %s" % (self, other))
         return _sympify(other).__lt__(self)
 
     def __ge__(self, other):
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s >= %s" % (self, other))
         return _sympify(other).__le__(self)
 
     def __hash__(self):
@@ -580,7 +592,12 @@ class Float(Number):
     """
     __slots__ = ['_mpf_', '_prec']
 
-    is_rational = True
+    # A Float represents many real numbers,
+    # both rational and irrational.
+    is_rational = None
+    is_irrational = None
+    is_number = True
+
     is_real = True
 
     is_Float = True
@@ -706,15 +723,15 @@ class Float(Number):
     def _as_mpf_op(self, prec):
         return self._mpf_, max(prec, self._prec)
 
-    def _eval_is_bounded(self):
+    def _eval_is_finite(self):
         if self._mpf_ in (_mpf_inf, _mpf_ninf):
             return False
         return True
 
-    def _eval_is_finite(self):
-        if self._mpf_ in (_mpf_inf, _mpf_ninf, _mpf_zero):
-            return False
-        return True
+    def _eval_is_infinite(self):
+        if self._mpf_ in (_mpf_inf, _mpf_ninf):
+            return True
+        return False
 
     def _eval_is_integer(self):
         return self._mpf_ == _mpf_zero
@@ -874,7 +891,7 @@ class Float(Number):
         try:
             other = _sympify(other)
         except SympifyError:
-            return S.false    # sympy > other
+            raise TypeError("Invalid comparison %s > %s" % (self, other))
         if isinstance(other, NumberSymbol):
             return other.__le__(self)
         if other.is_comparable:
@@ -888,7 +905,7 @@ class Float(Number):
         try:
             other = _sympify(other)
         except SympifyError:
-            return S.false    # sympy > other  -->  ! <=
+            raise TypeError("Invalid comparison %s >= %s" % (self, other))
         if isinstance(other, NumberSymbol):
             return other.__lt__(self)
         if other.is_comparable:
@@ -902,7 +919,7 @@ class Float(Number):
         try:
             other = _sympify(other)
         except SympifyError:
-            return S.false    # sympy > other
+            raise TypeError("Invalid comparison %s < %s" % (self, other))
         if isinstance(other, NumberSymbol):
             return other.__ge__(self)
         if other.is_real and other.is_number:
@@ -916,7 +933,7 @@ class Float(Number):
         try:
             other = _sympify(other)
         except SympifyError:
-            return S.false    # sympy > other  -->  ! <=
+            raise TypeError("Invalid comparison %s <= %s" % (self, other))
         if isinstance(other, NumberSymbol):
             return other.__gt__(self)
         if other.is_real and other.is_number:
@@ -935,6 +952,10 @@ class Float(Number):
     def _sage_(self):
         import sage.all as sage
         return sage.RealNumber(str(self))
+
+    def __format__(self, format_spec):
+        return format(decimal.Decimal(str(self)), format_spec)
+
 
 # Add sympify converters
 converter[float] = converter[decimal.Decimal] = Float
@@ -1031,6 +1052,7 @@ class Rational(Number):
     is_real = True
     is_integer = False
     is_rational = True
+    is_number = True
 
     __slots__ = ['p', 'q']
 
@@ -1324,11 +1346,9 @@ class Rational(Number):
         try:
             other = _sympify(other)
         except SympifyError:
-            return S.false    # sympy > other  --> not <
+            raise TypeError("Invalid comparison %s > %s" % (self, other))
         if isinstance(other, NumberSymbol):
             return other.__le__(self)
-        if other.is_real and other.is_number and not isinstance(other, Rational):
-            other = other.evalf()
         if isinstance(other, Number):
             if isinstance(other, Rational):
                 return _sympify(bool(self.p*other.q > self.q*other.p))
@@ -1337,17 +1357,17 @@ class Rational(Number):
                     self._as_mpf_val(other._prec), other._mpf_)))
             if other is S.NaN:
                 return other.__le__(self)
+        elif other.is_number and other.is_real:
+            self, other = Integer(self.p), self.q*other
         return Expr.__gt__(self, other)
 
     def __ge__(self, other):
         try:
             other = _sympify(other)
         except SympifyError:
-            return S.false    # sympy > other  -->  not <=
+            raise TypeError("Invalid comparison %s >= %s" % (self, other))
         if isinstance(other, NumberSymbol):
             return other.__lt__(self)
-        if other.is_real and other.is_number and not isinstance(other, Rational):
-            other = other.evalf()
         if isinstance(other, Number):
             if isinstance(other, Rational):
                  return _sympify(bool(self.p*other.q >= self.q*other.p))
@@ -1356,17 +1376,17 @@ class Rational(Number):
                     self._as_mpf_val(other._prec), other._mpf_)))
             if other is S.NaN:
                 return other.__lt__(self)
+        elif other.is_number and other.is_real:
+            self, other = Integer(self.p), self.q*other
         return Expr.__ge__(self, other)
 
     def __lt__(self, other):
         try:
             other = _sympify(other)
         except SympifyError:
-            return S.false    # sympy > other  --> not <
+            raise TypeError("Invalid comparison %s < %s" % (self, other))
         if isinstance(other, NumberSymbol):
             return other.__ge__(self)
-        if other.is_real and other.is_number and not isinstance(other, Rational):
-            other = other.evalf()
         if isinstance(other, Number):
             if isinstance(other, Rational):
                 return _sympify(bool(self.p*other.q < self.q*other.p))
@@ -1375,18 +1395,18 @@ class Rational(Number):
                     self._as_mpf_val(other._prec), other._mpf_)))
             if other is S.NaN:
                 return other.__ge__(self)
+        elif other.is_number and other.is_real:
+            self, other = Integer(self.p), self.q*other
         return Expr.__lt__(self, other)
 
     def __le__(self, other):
         try:
             other = _sympify(other)
         except SympifyError:
-            return S.false    # sympy > other  -->  not <=
+            raise TypeError("Invalid comparison %s <= %s" % (self, other))
         if isinstance(other, NumberSymbol):
             return other.__gt__(self)
-        if other.is_real and other.is_number and not isinstance(other, Rational):
-            other = other.evalf()
-        if isinstance(other, Number):
+        elif isinstance(other, Number):
             if isinstance(other, Rational):
                 return _sympify(bool(self.p*other.q <= self.q*other.p))
             if isinstance(other, Float):
@@ -1394,6 +1414,8 @@ class Rational(Number):
                     self._as_mpf_val(other._prec), other._mpf_)))
             if other is S.NaN:
                 return other.__gt__(self)
+        elif other.is_number and other.is_real:
+            self, other = Integer(self.p), self.q*other
         return Expr.__le__(self, other)
 
     def __hash__(self):
@@ -1543,6 +1565,7 @@ class Integer(Rational):
 
     q = 1
     is_integer = True
+    is_number = True
 
     is_Integer = True
 
@@ -1682,30 +1705,38 @@ class Integer(Rational):
         return not self.__eq__(other)
 
     def __gt__(self, other):
-        if isinstance(other, integer_types):
-            return _sympify(self.p > other)
-        elif isinstance(other, Integer):
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s > %s" % (self, other))
+        if isinstance(other, Integer):
             return _sympify(self.p > other.p)
         return Rational.__gt__(self, other)
 
     def __lt__(self, other):
-        if isinstance(other, integer_types):
-            return _sympify(self.p < other)
-        elif isinstance(other, Integer):
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s < %s" % (self, other))
+        if isinstance(other, Integer):
             return _sympify(self.p < other.p)
         return Rational.__lt__(self, other)
 
     def __ge__(self, other):
-        if isinstance(other, integer_types):
-            return _sympify(self.p >= other)
-        elif isinstance(other, Integer):
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s >= %s" % (self, other))
+        if isinstance(other, Integer):
             return _sympify(self.p >= other.p)
         return Rational.__ge__(self, other)
 
     def __le__(self, other):
-        if isinstance(other, integer_types):
-            return _sympify(self.p <= other)
-        elif isinstance(other, Integer):
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s <= %s" % (self, other))
+        if isinstance(other, Integer):
             return _sympify(self.p <= other.p)
         return Rational.__le__(self, other)
 
@@ -1845,6 +1876,131 @@ for i_type in integer_types:
     converter[i_type] = Integer
 
 
+class AlgebraicNumber(Expr):
+    """Class for representing algebraic numbers in SymPy. """
+
+    __slots__ = ['rep', 'root', 'alias', 'minpoly']
+
+    is_AlgebraicNumber = True
+    is_algebraic = True
+    is_number = True
+
+    def __new__(cls, expr, coeffs=Tuple(), alias=None, **args):
+        """Construct a new algebraic number. """
+
+        from sympy.polys.polyclasses import ANP, DMP
+        from sympy.polys.numberfields import minimal_polynomial
+        from sympy.core.symbol import Symbol
+
+        expr = sympify(expr)
+
+        if isinstance(expr, (tuple, Tuple)):
+            minpoly, root = expr
+
+            if not minpoly.is_Poly:
+                minpoly = C.Poly(minpoly)
+        elif expr.is_AlgebraicNumber:
+            minpoly, root = expr.minpoly, expr.root
+        else:
+            minpoly, root = minimal_polynomial(
+                expr, args.get('gen'), polys=True), expr
+
+        dom = minpoly.get_domain()
+
+        if coeffs != Tuple():
+            if not isinstance(coeffs, ANP):
+                rep = DMP.from_sympy_list(sympify(coeffs), 0, dom)
+                scoeffs = Tuple(*coeffs)
+            else:
+                rep = DMP.from_list(coeffs.to_list(), 0, dom)
+                scoeffs = Tuple(*coeffs.to_list())
+
+            if rep.degree() >= minpoly.degree():
+                rep = rep.rem(minpoly.rep)
+
+            sargs = (root, scoeffs)
+
+        else:
+            rep = DMP.from_list([1, 0], 0, dom)
+
+            if root.is_negative:
+                rep = -rep
+
+            sargs = (root, coeffs)
+
+        if alias is not None:
+            if not isinstance(alias, Symbol):
+                alias = Symbol(alias)
+            sargs = sargs + (alias,)
+
+        obj = Expr.__new__(cls, *sargs)
+
+        obj.rep = rep
+        obj.root = root
+        obj.alias = alias
+        obj.minpoly = minpoly
+
+        return obj
+
+    def __hash__(self):
+        return super(AlgebraicNumber, self).__hash__()
+
+    def _eval_evalf(self, prec):
+        return self.as_expr()._evalf(prec)
+
+    @property
+    def is_aliased(self):
+        """Returns ``True`` if ``alias`` was set. """
+        return self.alias is not None
+
+    def as_poly(self, x=None):
+        """Create a Poly instance from ``self``. """
+        if x is not None:
+            return C.Poly.new(self.rep, x)
+        else:
+            if self.alias is not None:
+                return C.Poly.new(self.rep, self.alias)
+            else:
+                return C.PurePoly.new(self.rep, C.Dummy('x'))
+
+    def as_expr(self, x=None):
+        """Create a Basic expression from ``self``. """
+        return self.as_poly(x or self.root).as_expr().expand()
+
+    def coeffs(self):
+        """Returns all SymPy coefficients of an algebraic number. """
+        return [ self.rep.dom.to_sympy(c) for c in self.rep.all_coeffs() ]
+
+    def native_coeffs(self):
+        """Returns all native coefficients of an algebraic number. """
+        return self.rep.all_coeffs()
+
+    def to_algebraic_integer(self):
+        """Convert ``self`` to an algebraic integer. """
+        f = self.minpoly
+
+        if f.LC() == 1:
+            return self
+
+        coeff = f.LC()**(f.degree() - 1)
+        poly = f.compose(C.Poly(f.gen/f.LC()))
+
+        minpoly = poly*coeff
+        root = f.LC()*self.root
+
+        return AlgebraicNumber((minpoly, root), self.coeffs())
+
+    def _eval_simplify(self, ratio, measure):
+        from sympy.polys import RootOf, minpoly
+
+        for r in [r for r in self.minpoly.all_roots() if r.func != RootOf]:
+            if minpoly(self.root - r).is_Symbol:
+                # use the matching root if it's simpler
+                if measure(r) < ratio*measure(self.root):
+                    return AlgebraicNumber(r)
+        return self
+
+
 class RationalConstant(Rational):
     """
     Abstract base class for rationals with specific behaviors
@@ -1889,9 +2045,9 @@ class Zero(with_metaclass(Singleton, IntegerConstant)):
     q = 1
     is_positive = False
     is_negative = False
-    is_finite = False
     is_zero = True
     is_composite = False
+    is_number = True
 
     __slots__ = []
 
@@ -1946,6 +2102,7 @@ class One(with_metaclass(Singleton, IntegerConstant)):
 
     .. [1] http://en.wikipedia.org/wiki/1_%28number%29
     """
+    is_number = True
 
     p = 1
     q = 1
@@ -1997,6 +2154,7 @@ class NegativeOne(with_metaclass(Singleton, IntegerConstant)):
     .. [1] http://en.wikipedia.org/wiki/%E2%88%921_%28number%29
 
     """
+    is_number = True
 
     p = -1
     q = 1
@@ -2051,6 +2209,7 @@ class Half(with_metaclass(Singleton, RationalConstant)):
 
     .. [1] http://en.wikipedia.org/wiki/One_half
     """
+    is_number = True
 
     p = 1
     q = 2
@@ -2102,12 +2261,8 @@ class Infinity(with_metaclass(Singleton, Number)):
 
     is_commutative = True
     is_positive = True
-    is_bounded = False
-    is_finite = False
-    is_infinitesimal = False
-    is_integer = None
-    is_rational = None
-    is_odd = None
+    is_infinite = True
+    is_number = True
 
     __slots__ = []
 
@@ -2240,29 +2395,47 @@ class Infinity(with_metaclass(Singleton, Number)):
     def __ne__(self, other):
         return other is not S.Infinity
 
-    @_sympifyit('other', NotImplemented)
     def __lt__(self, other):
-        if other.is_number and other.is_real is False:
-            raise TypeError("Invalid comparison of %s and %s" % (self, other))
-        return S.false
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s < %s" % (self, other))
+        if other.is_real:
+            return S.false
+        return Expr.__lt__(self, other)
 
-    @_sympifyit('other', NotImplemented)
     def __le__(self, other):
-        if other.is_number and other.is_real is False:
-            raise TypeError("Invalid comparison of %s and %s" % (self, other))
-        return _sympify(other is S.Infinity)
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s <= %s" % (self, other))
+        if other.is_real:
+            if other.is_finite or other is S.NegativeInfinity:
+                return S.false
+            elif other is S.Infinity:
+                return S.true
+        return Expr.__le__(self, other)
 
-    @_sympifyit('other', NotImplemented)
     def __gt__(self, other):
-        if other.is_number and other.is_real is False:
-            raise TypeError("Invalid comparison of %s and %s" % (self, other))
-        return _sympify(other is not S.Infinity)
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s > %s" % (self, other))
+        if other.is_real:
+            if other.is_finite or other is S.NegativeInfinity:
+                return S.true
+            elif other is S.Infinity:
+                return S.false
+        return Expr.__gt__(self, other)
 
-    @_sympifyit('other', NotImplemented)
     def __ge__(self, other):
-        if other.is_number and other.is_real is False:
-            raise TypeError("Invalid comparison of %s and %s" % (self, other))
-        return S.true
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s >= %s" % (self, other))
+        if other.is_real:
+            return S.true
+        return Expr.__ge__(self, other)
 
     def __mod__(self, other):
         return S.NaN
@@ -2285,13 +2458,9 @@ class NegativeInfinity(with_metaclass(Singleton, Number)):
     """
 
     is_commutative = True
-    is_real = True
-    is_positive = False
-    is_bounded = False
-    is_finite = False
-    is_infinitesimal = False
-    is_integer = None
-    is_rational = None
+    is_negative = True
+    is_infinite = True
+    is_number = True
 
     __slots__ = []
 
@@ -2433,29 +2602,52 @@ class NegativeInfinity(with_metaclass(Singleton, Number)):
     def __ne__(self, other):
         return other is not S.NegativeInfinity
 
-    @_sympifyit('other', NotImplemented)
     def __lt__(self, other):
-        if other.is_number and other.is_real is False:
-            raise TypeError("Invalid comparison of %s and %s" % (self, other))
-        return _sympify(other is not S.NegativeInfinity)
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s < %s" % (self, other))
+        if other.is_real:
+            if other.is_finite or other is S.Infinity:
+                return S.true
+            elif other is S.NegativeInfinity:
+                return S.false
+        return Expr.__lt__(self, other)
 
-    @_sympifyit('other', NotImplemented)
     def __le__(self, other):
-        if other.is_number and other.is_real is False:
-            raise TypeError("Invalid comparison of %s and %s" % (self, other))
-        return S.true
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s <= %s" % (self, other))
+        if other.is_real:
+            return S.true
+        return Expr.__le__(self, other)
 
-    @_sympifyit('other', NotImplemented)
     def __gt__(self, other):
-        if other.is_number and other.is_real is False:
-            raise TypeError("Invalid comparison of %s and %s" % (self, other))
-        return S.false
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s > %s" % (self, other))
+        if other.is_real:
+            return S.false
+        return Expr.__gt__(self, other)
 
-    @_sympifyit('other', NotImplemented)
     def __ge__(self, other):
-        if other.is_number and other.is_real is False:
-            raise TypeError("Invalid comparison of %s and %s" % (self, other))
-        return _sympify(other is S.NegativeInfinity)
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s >= %s" % (self, other))
+        if other.is_real:
+            if other.is_finite or other is S.Infinity:
+                return S.false
+            elif other is S.NegativeInfinity:
+                return S.true
+        return Expr.__ge__(self, other)
+
+    def __mod__(self, other):
+        return S.NaN
+
+    __rmod__ = __mod__
 
 
 class NaN(with_metaclass(Singleton, Number)):
@@ -2467,10 +2659,14 @@ class NaN(with_metaclass(Singleton, Number)):
     Python ``float('nan')``.
 
     NaN serves as a place holder for numeric values that are indeterminate.
-    Most operations on nan, produce another nan.  Most indeterminate forms,
-    such as ``0/0`` or ``oo - oo` produce nan.  Two exceptions are ``0**0``
+    Most operations on NaN, produce another NaN.  Most indeterminate forms,
+    such as ``0/0`` or ``oo - oo` produce NaN.  Two exceptions are ``0**0``
     and ``oo**0``, which all produce ``1`` (this is consistent with Python's
     float).
+
+    NaN is mathematically not equal to anything else, even NaN itself.  This
+    explains the initially counter-intuitive results with ``Eq`` and ``==`` in
+    the examples below.
 
     NaN is a singleton, and can be accessed by ``S.NaN``, or can be imported
     as ``nan``.
@@ -2478,13 +2674,17 @@ class NaN(with_metaclass(Singleton, Number)):
     Examples
     ========
 
-    >>> from sympy import nan, S, oo
+    >>> from sympy import nan, S, oo, Eq
     >>> nan is S.NaN
     True
     >>> oo - oo
     nan
     >>> nan + 1
     nan
+    >>> Eq(nan, nan)   # mathematical equality
+    False
+    >>> nan == nan     # structural equality
+    True
 
     References
     ==========
@@ -2495,14 +2695,16 @@ class NaN(with_metaclass(Singleton, Number)):
     is_commutative = True
     is_real = None
     is_rational = None
+    is_algebraic = None
+    is_transcendental = None
     is_integer = None
     is_comparable = False
     is_finite = None
-    is_bounded = None
     is_zero = None
     is_prime = None
     is_positive = None
     is_negative = None
+    is_number = True
 
     __slots__ = []
 
@@ -2541,21 +2743,42 @@ class NaN(with_metaclass(Singleton, Number)):
         return super(NaN, self).__hash__()
 
     def __eq__(self, other):
+        # NaN is structurally equal to another NaN
         return other is S.NaN
 
     def __ne__(self, other):
         return other is not S.NaN
 
+    def _eval_Eq(self, other):
+        # NaN is not mathematically equal to anything, even NaN
+        return S.false
+
     def __gt__(self, other):
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s > %s" % (self, other))
         return S.false
 
     def __ge__(self, other):
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s >= %s" % (self, other))
         return S.false
 
     def __lt__(self, other):
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s < %s" % (self, other))
         return S.false
 
     def __le__(self, other):
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s <= %s" % (self, other))
         return S.false
 
 nan = S.NaN
@@ -2591,8 +2814,7 @@ class ComplexInfinity(with_metaclass(Singleton, AtomicExpr)):
     """
 
     is_commutative = True
-    is_bounded = False
-    is_real = None
+    is_infinite = True
     is_number = True
 
     __slots__ = []
@@ -2630,7 +2852,6 @@ zoo = S.ComplexInfinity
 class NumberSymbol(AtomicExpr):
 
     is_commutative = True
-    is_bounded = True
     is_finite = True
     is_number = True
 
@@ -2669,7 +2890,7 @@ class NumberSymbol(AtomicExpr):
         try:
             other = _sympify(other)
         except SympifyError:
-            return S.false    # sympy > other  --> not <
+            raise TypeError("Invalid comparison %s < %s" % (self, other))
         if self is other:
             return S.false
         if isinstance(other, Number):
@@ -2690,7 +2911,7 @@ class NumberSymbol(AtomicExpr):
         try:
             other = _sympify(other)
         except SympifyError:
-            return S.false    # sympy > other  --> not <=
+            raise TypeError("Invalid comparison %s <= %s" % (self, other))
         if self is other:
             return S.true
         if other.is_real and other.is_number:
@@ -2700,10 +2921,26 @@ class NumberSymbol(AtomicExpr):
         return Expr.__le__(self, other)
 
     def __gt__(self, other):
-        return _sympify((-self) < (-other))
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s > %s" % (self, other))
+        r = _sympify((-self) < (-other))
+        if r in (S.true, S.false):
+            return r
+        else:
+            return Expr.__gt__(self, other)
 
     def __ge__(self, other):
-        return _sympify((-self) <= (-other))
+        try:
+            other = _sympify(other)
+        except SympifyError:
+            raise TypeError("Invalid comparison %s >= %s" % (self, other))
+        r = _sympify((-self) <= (-other))
+        if r in (S.true, S.false):
+            return r
+        else:
+            return Expr.__ge__(self, other)
 
     def __int__(self):
         # subclass with appropriate return value
@@ -2745,6 +2982,9 @@ class Exp1(with_metaclass(Singleton, NumberSymbol)):
     is_positive = True
     is_negative = False  # XXX Forces is_negative/is_nonnegative
     is_irrational = True
+    is_number = True
+    is_algebraic = False
+    is_transcendental = True
 
     __slots__ = []
 
@@ -2821,6 +3061,9 @@ class Pi(with_metaclass(Singleton, NumberSymbol)):
     is_positive = True
     is_negative = False
     is_irrational = True
+    is_number = True
+    is_algebraic = False
+    is_transcendental = True
 
     __slots__ = []
 
@@ -2879,6 +3122,9 @@ class GoldenRatio(with_metaclass(Singleton, NumberSymbol)):
     is_positive = True
     is_negative = False
     is_irrational = True
+    is_number = True
+    is_algebraic = True
+    is_transcendental = False
 
     __slots__ = []
 
@@ -2941,6 +3187,7 @@ class EulerGamma(with_metaclass(Singleton, NumberSymbol)):
     is_positive = True
     is_negative = False
     is_irrational = None
+    is_number = True
 
     __slots__ = []
 
@@ -2996,6 +3243,7 @@ class Catalan(with_metaclass(Singleton, NumberSymbol)):
     is_positive = True
     is_negative = False
     is_irrational = None
+    is_number = True
 
     __slots__ = []
 
@@ -3044,9 +3292,10 @@ class ImaginaryUnit(with_metaclass(Singleton, AtomicExpr)):
 
     is_commutative = True
     is_imaginary = True
-    is_bounded = True
     is_finite = True
     is_number = True
+    is_algebraic = True
+    is_transcendental = False
 
     __slots__ = []
 

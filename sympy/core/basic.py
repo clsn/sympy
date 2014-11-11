@@ -1,14 +1,14 @@
 """Base class for all the objects in SymPy"""
 from __future__ import print_function, division
 
-from sympy.core.assumptions import ManagedProperties
-from sympy.core.cache import cacheit
-from sympy.core.core import BasicType, C
-from sympy.core.sympify import _sympify, sympify, SympifyError
-from sympy.core.compatibility import (reduce, iterable, Iterator, ordered,
+from .assumptions import ManagedProperties
+from .cache import cacheit
+from .core import BasicType, C
+from .sympify import _sympify, sympify, SympifyError
+from .compatibility import (reduce, iterable, Iterator, ordered,
     string_types, with_metaclass, zip_longest)
-from sympy.core.decorators import deprecated
-from sympy.core.singleton import S
+from .decorators import deprecated
+from .singleton import S
 
 from inspect import getmro
 
@@ -48,6 +48,7 @@ class Basic(with_metaclass(ManagedProperties)):
                 ]
 
     # To be overridden with True in the appropriate subclasses
+    is_number = False
     is_Atom = False
     is_Symbol = False
     is_Dummy = False
@@ -71,6 +72,7 @@ class Basic(with_metaclass(ManagedProperties)):
     is_Boolean = False
     is_Not = False
     is_Matrix = False
+    is_Vector = False
 
     def __new__(cls, *args):
         obj = object.__new__(cls)
@@ -182,10 +184,10 @@ class Basic(with_metaclass(ManagedProperties)):
         if c:
             return c
         for l, r in zip(st, ot):
+            l = Basic(*l) if isinstance(l, frozenset) else l
+            r = Basic(*r) if isinstance(r, frozenset) else r
             if isinstance(l, Basic):
                 c = l.compare(r)
-            elif isinstance(l, frozenset):
-                c = 0
             else:
                 c = (l > r) - (l < r)
             if c:
@@ -334,17 +336,7 @@ class Basic(with_metaclass(ManagedProperties)):
 
            but faster
         """
-
-        if type(self) is not type(other):
-            try:
-                other = _sympify(other)
-            except SympifyError:
-                return True     # sympy != other
-
-            if type(self) is not type(other):
-                return True
-
-        return self._hashable_content() != other._hashable_content()
+        return not self.__eq__(other)
 
     def dummy_eq(self, other, symbol=None):
         """
@@ -499,8 +491,7 @@ class Basic(with_metaclass(ManagedProperties)):
 
         Any other method that uses bound variables should implement a symbols
         method."""
-        union = set.union
-        return reduce(union, [arg.free_symbols for arg in self.args], set())
+        return reduce(set.union, [a.free_symbols for a in self.args], set())
 
     @property
     def canonical_variables(self):
@@ -568,19 +559,6 @@ class Basic(with_metaclass(ManagedProperties)):
     def is_hypergeometric(self, k):
         from sympy.simplify import hypersimp
         return hypersimp(self, k) is not None
-
-    @property
-    def is_number(self):
-        """Returns ``True`` if 'self' contains no free symbols.
-
-        See Also
-        ========
-        is_comparable
-        sympy.core.expr.is_number
-
-        """
-        # should be overriden by subclasses
-        return False
 
     @property
     def is_comparable(self):
@@ -681,20 +659,10 @@ class Basic(with_metaclass(ManagedProperties)):
         """
         return self.args
 
+    @deprecated(useinstead="iter(self.args)", issue=7717, deprecated_since_version="0.7.6")
     def iter_basic_args(self):
         """
         Iterates arguments of ``self``.
-
-        Examples
-        ========
-
-        >>> from sympy.abc import x
-        >>> a = 2*x
-        >>> a.iter_basic_args()
-        <...iterator object at 0x...>
-        >>> list(a.iter_basic_args())
-        [2, x]
-
         """
         return iter(self.args)
 
@@ -1370,7 +1338,10 @@ class Basic(with_metaclass(ManagedProperties)):
                     mapping[expr] = new
                     if simultaneous:
                         # don't let this expression be changed during rebuilding
-                        d = Dummy()
+                        com = getattr(new, 'is_commutative', True)
+                        if com is None:
+                            com = True
+                        d = Dummy(commutative=com)
                         mask.append((d, new))
                         expr = d
                     else:
@@ -1571,7 +1542,7 @@ class Basic(with_metaclass(ManagedProperties)):
         you can use string or a destination function instance (in
         this case rewrite() will use the str() function).
 
-        There is also possibility to pass hints on how to rewrite
+        There is also the possibility to pass hints on how to rewrite
         the given expressions. For now there is only one such hint
         defined called 'deep'. When 'deep' is set to False it will
         forbid functions to rewrite their contents.
@@ -1616,6 +1587,20 @@ class Basic(with_metaclass(ManagedProperties)):
                     return self._eval_rewrite(tuple(pattern), rule, **hints)
                 else:
                     return self
+
+    @property
+    @deprecated(useinstead="is_finite", issue=8071, deprecated_since_version="0.7.6")
+    def is_bounded(self):
+        return super(Basic, self).__getattribute__('is_finite')
+
+    @property
+    @deprecated(useinstead="is_infinite", issue=8071, deprecated_since_version="0.7.6")
+    def is_unbounded(self):
+        return super(Basic, self).__getattribute__('is_infinite')
+
+    @deprecated(useinstead="is_zero", issue=8071, deprecated_since_version="0.7.6")
+    def is_infinitesimal(self):
+        return super(Basic, self).__getattribute__('is_zero')
 
 
 class Atom(Basic):

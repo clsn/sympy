@@ -9,7 +9,7 @@ from sympy import (
     posify, powdenest, powsimp, rad, radsimp, Rational, ratsimp,
     ratsimpmodprime, rcollect, RisingFactorial, root, S, separatevars,
     signsimp, simplify, sin, sinh, solve, sqrt, Subs, Symbol, symbols,
-    sympify, tan, tanh, trigsimp, Wild, zoo, Sum)
+    sympify, tan, tanh, trigsimp, Wild, zoo, Sum, Lt)
 from sympy.core.mul import _keep_coeff, _unevaluated_Mul as umul
 from sympy.simplify.simplify import (
     collect_sqrt, fraction_expand, _unevaluated_Add, nthroot)
@@ -110,14 +110,14 @@ def test_trigsimp1():
     assert trigsimp(sin(x + y) - sin(x - y)) == 2*sin(y)*cos(x)
     assert trigsimp(cos(x + y) + cos(x - y)) == 2*cos(x)*cos(y)
     assert trigsimp(cos(x + y) - cos(x - y)) == -2*sin(x)*sin(y)
-    assert ratsimp(trigsimp(tan(x + y) - tan(x)/(1 - tan(x)*tan(y)))) == \
+    assert trigsimp(tan(x + y) - tan(x)/(1 - tan(x)*tan(y))) == \
         sin(y)/(-sin(y)*tan(x) + cos(y))  # -tan(y)/(tan(x)*tan(y) - 1)
 
     assert trigsimp(sinh(x + y) + sinh(x - y)) == 2*sinh(x)*cosh(y)
     assert trigsimp(sinh(x + y) - sinh(x - y)) == 2*sinh(y)*cosh(x)
     assert trigsimp(cosh(x + y) + cosh(x - y)) == 2*cosh(x)*cosh(y)
     assert trigsimp(cosh(x + y) - cosh(x - y)) == 2*sinh(x)*sinh(y)
-    assert ratsimp(trigsimp(tanh(x + y) - tanh(x)/(1 + tanh(x)*tanh(y)))) == \
+    assert trigsimp(tanh(x + y) - tanh(x)/(1 + tanh(x)*tanh(y))) == \
         sinh(y)/(sinh(y)*tanh(x) + cosh(y))
 
     assert trigsimp(cos(0.12345)**2 + sin(0.12345)**2) == 1
@@ -291,6 +291,10 @@ def test_trigsimp_issue_4032():
     n = Symbol('n', integer=True, positive=True)
     assert trigsimp(2**(n/2)*cos(pi*n/4)/2 + 2**(n - 1)/2) == \
         2**(n/2)*cos(pi*n/4)/2 + 2**n/4
+
+
+def test_trigsimp_issue_7761():
+    assert trigsimp(cosh(pi/4)) == cosh(pi/4)
 
 
 def test_trigsimp_noncommutative():
@@ -536,6 +540,10 @@ def test_simplify_measure():
     assert measure1(simplify(expr, measure=measure1)) <= measure1(expr)
     assert measure2(simplify(expr, measure=measure2)) <= measure2(expr)
 
+    expr2 = Eq(sin(x)**2 + cos(x)**2, 1)
+    assert measure1(simplify(expr2, measure=measure1)) <= measure1(expr2)
+    assert measure2(simplify(expr2, measure=measure2)) <= measure2(expr2)
+
 
 def test_simplify_issue_1308():
     assert simplify(exp(-Rational(1, 2)) + exp(-Rational(3, 2))) == \
@@ -671,6 +679,8 @@ def test_powsimp():
     # issue 6368
     eq = Mul(*[sqrt(Dummy(imaginary=True)) for i in range(3)])
     assert powsimp(eq) == eq and eq.is_Mul
+
+    assert all(powsimp(e) == e for e in (sqrt(x**a), sqrt(x**2)))
 
 
 def test_issue_6367():
@@ -1085,8 +1095,10 @@ def test_nsimplify():
     assert nsimplify(-.2, tolerance=0) == -S.One/5
     assert nsimplify(.2222, tolerance=0) == S(1111)/5000
     assert nsimplify(-.2222, tolerance=0) == -S(1111)/5000
-    # issues 4112
+    # issue 7211, PR 4112
     assert nsimplify(S(2e-8)) == S(1)/50000000
+    # issue 7322 direct test
+    assert nsimplify(1e-42, rational=True) != 0
 
 
 def test_extract_minus_sign():
@@ -1212,7 +1224,8 @@ def test_powdenest():
         (((x**(2*a/3))**(3*y/i))**x)
     assert powdenest((x**(2*i)*y**(4*i))**z, force=True) == (x*y**2)**(2*i*z)
     assert powdenest((p**(2*i)*q**(4*i))**j) == (p*q**2)**(2*i*j)
-    assert powdenest(((p**(2*a))**(3*y))**x) == p**(6*a*x*y)
+    e = ((p**(2*a))**(3*y))**x
+    assert powdenest(e) == e
     e = ((x**2*y**4)**a)**(x*y)
     assert powdenest(e) == e
     e = (((x**2*y**4)**a)**(x*y))**3
@@ -1820,7 +1833,7 @@ def test_issue_7001():
 
 def test_exptrigsimp():
     def valid(a, b):
-        from sympy.utilities.randtest import test_numerically as tn
+        from sympy.utilities.randtest import verify_numerically as tn
         if not (tn(a, b) and a == b):
             return False
         return True
@@ -1885,3 +1898,12 @@ def test_issue_2827_trigsimp_methods():
 
 def test_powsimp_on_numbers():
     assert 2**(S(1)/3 - 2) == 2**(S(1)/3)/4
+
+
+def test_inequality_no_auto_simplify():
+    # no simplify on creation but can be simplified
+    lhs = cos(x)**2 + sin(x)**2
+    rhs = 2;
+    e = Lt(lhs, rhs)
+    assert e == Lt(lhs, rhs, evaluate=False)
+    assert simplify(e)

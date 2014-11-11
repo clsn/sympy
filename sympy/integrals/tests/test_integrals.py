@@ -1,7 +1,7 @@
 from sympy import (
     Abs, acos, acosh, Add, adjoint, asin, asinh, atan, Ci, conjugate, cos,
     Derivative, diff, DiracDelta, E, exp, erf, erfi, EulerGamma, factor, Function,
-    Heaviside, I, Integral, integrate, Interval, Lambda, LambertW, log,
+    I, Integral, integrate, Interval, Lambda, LambertW, log,
     Matrix, O, oo, pi, Piecewise, Poly, Rational, S, simplify, sin, tan, sqrt,
     sstr, Sum, Symbol, symbols, sympify, terms_gcd, transpose, trigsimp,
     Tuple, nan, And, Eq, Or, re, im
@@ -80,6 +80,9 @@ def test_basics():
 
     assert diff_test(Integral(x, (x, 3*y))) == set([y])
     assert diff_test(Integral(x, (a, 3*y))) == set([x, y])
+
+    assert integrate(x, (x, oo, oo)) == 0 #issue 8171
+    assert integrate(x, (x, -oo, -oo)) == 0
 
     # sum integral of terms
     assert integrate(y + x + exp(x), x) == x*y + x**2/2 + exp(x)
@@ -297,10 +300,9 @@ def test_matrices():
         [-cos(2*x), -cos(3*x)],
     ])
 
-# issue1012
-
 
 def test_integrate_functions():
+    # issue 4111
     assert integrate(f(x), x) == Integral(f(x), x)
     assert integrate(f(x), (x, 0, 1)) == Integral(f(x), (x, 0, 1))
     assert integrate(f(x)*diff(f(x), x), x) == f(x)**2/2
@@ -528,7 +530,8 @@ def test_subs5():
     e = Integral(exp(-x**2), (x, x))
     assert e.subs(x, 5) == Integral(exp(-x**2), (x, 5))
     e = Integral(exp(x), x)
-    assert (e.subs(x,1)-e.subs(x,0) - Integral(exp(x),(x,0,1))).doit().is_zero
+    assert (e.subs(x,1) - e.subs(x,0) - Integral(exp(x), (x, 0, 1))
+        ).doit().is_zero
 
 
 def test_subs6():
@@ -641,7 +644,7 @@ def test_integral_reconstruct():
     assert e == Integral(*e.args)
 
 
-def test_doit():
+def test_doit_integrals():
     e = Integral(Integral(2*x), (x, 0, 1))
     assert e.doit() == Rational(1, 3)
     assert e.doit(deep=False) == Rational(1, 3)
@@ -650,6 +653,10 @@ def test_doit():
     assert Integral(f(x), (x, 1, 1)).doit() == 0
     # doesn't matter if the limits can't be evaluated
     assert Integral(0, (x, 1, Integral(f(x), x))).doit() == 0
+    assert Integral(x, (a, 0)).doit() == 0
+    limits = ((a, 1, exp(x)), (x, 0))
+    assert Integral(a, *limits).doit() == S(1)/4
+    assert Integral(a, *list(reversed(limits))).doit() == 0
 
 
 def test_issue_4884():
@@ -675,12 +682,15 @@ def test_is_number():
     assert Integral(x, (y, 1, x)).is_number is False
     assert Integral(x, (y, 1, 2)).is_number is False
     assert Integral(x, (x, 1, 2)).is_number is True
+    # `foo.is_number` should always be eqivalent to `not foo.free_symbols`
+    # in each of these cases, there are pseudo-free symbols
     i = Integral(x, (y, 1, 1))
-    assert i.is_number is True and i.n() == 0
+    assert i.is_number is False and i.n() == 0
     i = Integral(x, (y, z, z))
-    assert i.is_number is True and i.n() == 0
+    assert i.is_number is False and i.n() == 0
     i = Integral(1, (y, z, z + 2))
-    assert i.is_number is True and i.n() == 2
+    assert i.is_number is False and i.n() == 2
+
     assert Integral(x*y, (x, 1, 2), (y, 1, 3)).is_number is True
     assert Integral(x*y, (x, 1, 2), (y, 1, z)).is_number is False
     assert Integral(x, (x, 1)).is_number is True
@@ -694,7 +704,7 @@ def test_is_number():
 
 def test_symbols():
     from sympy.abc import x, y, z
-    assert Integral(0, x).free_symbols == set()
+    assert Integral(0, x).free_symbols == set([x])
     assert Integral(x).free_symbols == set([x])
     assert Integral(x, (x, None, y)).free_symbols == set([y])
     assert Integral(x, (x, y, None)).free_symbols == set([y])
@@ -704,7 +714,8 @@ def test_symbols():
     assert Integral(x, x, y).free_symbols == set([x, y])
     assert Integral(x, (x, 1, 2)).free_symbols == set()
     assert Integral(x, (y, 1, 2)).free_symbols == set([x])
-    assert Integral(x, (y, z, z)).free_symbols == set()
+    # pseudo-free in this case
+    assert Integral(x, (y, z, z)).free_symbols == set([x, z])
     assert Integral(x, (y, 1, 2), (y, None, None)).free_symbols == set([x, y])
     assert Integral(x, (y, 1, 2), (x, 1, y)).free_symbols == set([y])
     assert Integral(2, (y, 1, 2), (y, 1, x), (x, 1, 2)).free_symbols == set()
@@ -714,16 +725,22 @@ def test_symbols():
 
 
 def test_is_zero():
-    from sympy.abc import x, m, n
+    from sympy.abc import x, m
     assert Integral(0, (x, 1, x)).is_zero
     assert Integral(1, (x, 1, 1)).is_zero
-    assert Integral(1, (x, 1, 2)).is_zero is False
-    assert Integral(sin(m*x)*cos(n*x), (x, 0, 2*pi)).is_zero is None
+    assert Integral(1, (x, 1, 2), (y, 2)).is_zero is False
     assert Integral(x, (m, 0)).is_zero
-    assert Integral(x + 1/m, (m, 0)).is_zero is None
+    assert Integral(x + m, (m, 0)).is_zero is None
     i = Integral(m, (m, 1, exp(x)), (x, 0))
-    assert i.is_zero is None and i.doit() == S(1)/4
+    assert i.is_zero is None
     assert Integral(m, (x, 0), (m, 1, exp(x))).is_zero is True
+
+    assert Integral(x, (x, oo, oo)).is_zero # issue 8171
+    assert Integral(x, (x, -oo, -oo)).is_zero
+
+    # this is zero but is beyond the scope of what is_zero
+    # should be doing
+    assert Integral(sin(x), (x, 0, 2*pi)).is_zero is None
 
 
 def test_series():
@@ -825,7 +842,7 @@ def test_issue_4199():
 
 
 def test_issue_3940():
-    a, b, c, d = symbols('a:d', positive=True, bounded=True)
+    a, b, c, d = symbols('a:d', positive=True, finite=True)
     assert integrate(exp(-x**2 + I*c*x), x) == \
         -sqrt(pi)*exp(-c**2/4)*erf(I*c/2 - x)/2
     assert integrate(exp(a*x**2 + b*x + c), x) == \
