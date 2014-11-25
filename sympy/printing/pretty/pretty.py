@@ -764,15 +764,14 @@ class PrettyPrinter(Printer):
             baseline = 0
 
             def render(self, *args, **kwargs):
-                self = e
-                if self == e.zero:
+                if e == e.zero:
                     return e.zero._pretty_form
                 o1 = []
                 vectstrs = []
-                if isinstance(self, Vector):
-                    items = self.separate().items()
+                if isinstance(e, Vector):
+                    items = e.separate().items()
                 else:
-                    items = [(0, self)]
+                    items = [(0, e)]
                 for system, vect in items:
                     inneritems = list(vect.components.items())
                     inneritems.sort(key = lambda x: x[0].__str__())
@@ -1232,7 +1231,7 @@ class PrettyPrinter(Printer):
 
         for i, term in enumerate(terms):
             if term.is_Mul and _coeff_isneg(term):
-                coeff, other = term.as_coeff_mul()
+                coeff, other = term.as_coeff_mul(rational=False)
                 pform = self._print(C.Mul(-coeff, *other, evaluate=False))
                 pforms.append(pretty_negative(pform, i))
             elif term.is_Rational and term.q > 1:

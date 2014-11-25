@@ -336,6 +336,10 @@ def test_transform():
         Integral(-1/x**3, (x, -oo, -1/_3)).doit()
     assert Integral(x, (x, 0, _3)).transform(x, 1/y) == \
         Integral(y**(-3), (y, 1/_3, oo))
+    # issue 8400
+    i = Integral(x + y, (x, 1, 2), (y, 1, 2))
+    assert i.transform(x, (x + 2*y, x)).doit() == \
+        i.transform(x, (x + 2*z, x)).doit() == 3
 
 
 def test_issue_4052():
@@ -1044,7 +1048,7 @@ def test_issue_4234():
 def test_issue_4492():
     assert simplify(integrate(x**2 * sqrt(5 - x**2), x)) == Piecewise(
         (I*(2*x**5 - 15*x**3 + 25*x - 25*sqrt(x**2 - 5)*acosh(sqrt(5)*x/5)) /
-            (8*sqrt(x**2 - 5)), Abs(x**2)/5 > 1),
+            (8*sqrt(x**2 - 5)), 1 < Abs(x**2)/5),
         ((-2*x**5 + 15*x**3 - 25*x + 25*sqrt(-x**2 + 5)*asin(sqrt(5)*x/5)) /
             (8*sqrt(-x**2 + 5)), True))
 
