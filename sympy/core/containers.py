@@ -9,7 +9,7 @@
 from __future__ import print_function, division
 
 from sympy.core.basic import Basic
-from sympy.core.compatibility import as_int
+from sympy.core.compatibility import as_int, range
 from sympy.core.sympify import sympify, converter
 from sympy.utilities.iterables import iterable
 
@@ -32,9 +32,9 @@ class Tuple(Basic):
 
     """
 
-    def __new__(cls, *args, **assumptions):
+    def __new__(cls, *args):
         args = [ sympify(arg) for arg in args ]
-        obj = Basic.__new__(cls, *args, **assumptions)
+        obj = Basic.__new__(cls, *args)
         return obj
 
     def __getitem__(self, i):

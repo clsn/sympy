@@ -2,12 +2,15 @@ from sympy import (
     Abs, And, binomial, Catalan, cos, Derivative, E, Eq, exp, EulerGamma,
     factorial, Function, harmonic, I, Integral, KroneckerDelta, log,
     nan, Ne, Or, oo, pi, Piecewise, Product, product, Rational, S, simplify,
-    sqrt, Sum, summation, Symbol, symbols, sympify, zeta, gamma, Le
-)
+    sin, sqrt, Sum, summation, Symbol, symbols, sympify, zeta, gamma, Le,
+    Indexed, Idx, IndexedBase, prod)
 from sympy.abc import a, b, c, d, f, k, m, x, y, z
 from sympy.concrete.summations import telescopic
 from sympy.utilities.pytest import XFAIL, raises
 from sympy import simplify
+from sympy.matrices import Matrix
+from sympy.core.mod import Mod
+from sympy.core.compatibility import range
 
 n = Symbol('n', integer=True)
 
@@ -101,6 +104,10 @@ def test_karr_convention():
     Sz = Sum(f(i), (i, a, b)).doit()
 
     assert Sz == 0
+
+    e = Piecewise((exp(-i), Mod(i, 2) > 0), (0, True))
+    s = Sum(e, (i, 0, 11))
+    assert s.n(3) == s.doit().n(3)
 
 
 def test_karr_proposition_2a():
@@ -245,6 +252,9 @@ def test_geometric_sums():
     # issue 8251:
     assert summation((1/(n + 1)**2)*n**2, (n, 0, oo)) == oo
 
+    #issue 9908:
+    assert Sum(1/(n**3 - 1), (n, -oo, -2)).doit() == summation(1/(n**3 - 1), (n, -oo, -2))
+
 
 def test_harmonic_sums():
     assert summation(1/k, (k, 0, n)) == Sum(1/k, (k, 0, n))
@@ -348,6 +358,7 @@ def test_euler_maclaurin():
     check_exact(k**4 + k**2, a, b, 1, 5)
     check_exact(k**5, 2, 6, 1, 2)
     check_exact(k**5, 2, 6, 1, 3)
+    assert Sum(x-1, (x, 0, 2)).euler_maclaurin(m=30, n=30, eps=2**-15) == (0, 0)
     # Not exact
     assert Sum(k**6, (k, a, b)).euler_maclaurin(0, 2)[1] != 0
     # Numerical test
@@ -566,7 +577,7 @@ def test_eval_diff():
 
 
 def test_hypersum():
-    from sympy import simplify, sin, hyper
+    from sympy import sin
     assert simplify(summation(x**n/fac(n), (n, 1, oo))) == -1 + exp(x)
     assert summation((-1)**n * x**(2*n) / fac(2*n), (n, 0, oo)) == cos(x)
     assert simplify(summation((-1)**n*x**(2*n + 1) /
@@ -672,7 +683,7 @@ def test_issue_6274():
 
 
 def test_simplify():
-    y, t = symbols('y, t')
+    y, t, v = symbols('y, t, v')
 
     assert simplify(Sum(x*y, (x, n, m), (y, a, k)) + \
         Sum(y, (x, n, m), (y, a, k))) == Sum(x*y + y, (x, n, m), (y, a, k))
@@ -699,6 +710,10 @@ def test_simplify():
         simplify(Sum(x, (t, a, b)) + Sum(x, (t, b+1, c)) + Sum(x, (t, b+1, c)))
     assert simplify(Sum(x, (x, a, b))*Sum(x**2, (x, a, b))) == \
         Sum(x, (x, a, b)) * Sum(x**2, (x, a, b))
+    assert simplify(Sum(x, (t, a, b)) + Sum(y, (t, a, b)) + Sum(z, (t, a, b))) \
+        == Sum(x + y + z, (t, a, b))          # issue 8596
+    assert simplify(Sum(x, (t, a, b)) + Sum(y, (t, a, b)) + Sum(z, (t, a, b)) + \
+        Sum(v, (t, a, b))) == Sum(x + y + z + v, (t, a, b))  # issue 8596
 
 
 def test_change_index():
@@ -814,3 +829,103 @@ def test_issue_2787():
 
 def test_issue_4668():
     assert summation(1/n, (n, 2, oo)) == oo
+
+
+def test_matrix_sum():
+    A = Matrix([[0,1],[n,0]])
+    assert Sum(A,(n,0,3)).doit() == Matrix([[0, 4], [6, 0]])
+
+
+def test_indexed_idx_sum():
+    i = symbols('i', cls=Idx)
+    r = Indexed('r', i)
+    assert Sum(r, (i, 0, 3)).doit() == sum([r.xreplace({i: j}) for j in range(4)])
+    assert Product(r, (i, 0, 3)).doit() == prod([r.xreplace({i: j}) for j in range(4)])
+
+    j = symbols('j', integer=True)
+    assert Sum(r, (i, j, j+2)).doit() == sum([r.xreplace({i: Idx(j+k)}) for k in range(3)])
+    assert Product(r, (i, j, j+2)).doit() == prod([r.xreplace({i: Idx(j+k)}) for k in range(3)])
+
+    k = Idx('k', range=(1, 3))
+    A = IndexedBase('A')
+    assert Sum(A[k], k).doit() == sum([A[Idx(j, (1, 3))] for j in range(1, 4)])
+    assert Product(A[k], k).doit() == prod([A[Idx(j, (1, 3))] for j in range(1, 4)])
+
+    raises(ValueError, lambda: Sum(A[k], (k, 1, 4)))
+    raises(ValueError, lambda: Sum(A[k], (k, 0, 3)))
+    raises(ValueError, lambda: Sum(A[k], (k, 2, oo)))
+
+    raises(ValueError, lambda: Product(A[k], (k, 1, 4)))
+    raises(ValueError, lambda: Product(A[k], (k, 0, 3)))
+    raises(ValueError, lambda: Product(A[k], (k, 2, oo)))
+
+
+def test_is_convergent():
+    # divergence tests --
+    assert Sum(n/(2*n + 1), (n, 1, oo)).is_convergent() is S.false
+    assert Sum(factorial(n)/5**n, (n, 1, oo)).is_convergent() is S.false
+    assert Sum(3**(-2*n - 1)*n**n, (n, 1, oo)).is_convergent() is S.false
+    assert Sum((-1)**n*n, (n, 3, oo)).is_convergent() is S.false
+    assert Sum((-1)**n, (n, 1, oo)).is_convergent() is S.false
+    assert Sum(log(1/n), (n, 2, oo)).is_convergent() is S.false
+
+    # root test --
+    assert Sum((-12)**n/n, (n, 1, oo)).is_convergent() is S.false
+    assert Sum(2**n/factorial(n), (n, 1, oo)).is_convergent() is S.true
+
+    # integral test --
+
+    # p-series test --
+    assert Sum(1/(n**2 + 1), (n, 1, oo)).is_convergent() is S.true
+    assert Sum(1/n**(S(6)/5), (n, 1, oo)).is_convergent() is S.true
+    assert Sum(2/(n*sqrt(n - 1)), (n, 2, oo)).is_convergent() is S.true
+
+    # comparison test --
+    assert Sum(1/(n + log(n)), (n, 1, oo)).is_convergent() is S.false
+    assert Sum(1/(n**2*log(n)), (n, 2, oo)).is_convergent() is S.true
+    assert Sum(1/(n*log(n)), (n, 2, oo)).is_convergent() is S.false
+    assert Sum(2/(n*log(n)*log(log(n))**2), (n, 5, oo)).is_convergent() is S.true
+    assert Sum(2/(n*log(n)**2), (n, 2, oo)).is_convergent() is S.true
+    assert Sum((n - 1)/(n**2*log(n)**3), (n, 2, oo)).is_convergent() is S.true
+    assert Sum(1/(n*log(n)*log(log(n))), (n, 5, oo)).is_convergent() is S.false
+    assert Sum((n - 1)/(n*log(n)**3), (n, 3, oo)).is_convergent() is S.false
+    assert Sum(2/(n**2*log(n)), (n, 2, oo)).is_convergent() is S.true
+
+    # alternating series tests --
+    assert Sum((-1)**(n - 1)/(n**2 - 1), (n, 3, oo)).is_convergent() is S.true
+
+    # with -negativeInfinite Limits
+    assert Sum(1/(n**2 + 1), (n, -oo, 1)).is_convergent() is S.true
+    assert Sum(1/(n - 1), (n, -oo, -1)).is_convergent() is S.false
+    assert Sum(1/(n**2 - 1), (n, -oo, -5)).is_convergent() is S.true
+    assert Sum(1/(n**2 - 1), (n, -oo, 2)).is_convergent() is S.true
+    assert Sum(1/(n**2 - 1), (n, -oo, oo)).is_convergent() is S.true
+
+    # piecewise functions
+    f = Piecewise((n**(-2), n <= 1), (n**2, n > 1))
+    assert Sum(f, (n, 1, oo)).is_convergent() is S.false
+    assert Sum(f, (n, -oo, oo)).is_convergent() is S.false
+    assert Sum(f, (n, -oo, 1)).is_convergent() is S.true
+
+
+def test_is_absolute_convergent():
+    assert Sum((-1)**n, (n, 1, oo)).is_absolute_convergent() is S.false
+    assert Sum((-1)**n/n**2, (n, 1, oo)).is_absolute_convergent() is S.true
+
+
+@XFAIL
+def test_convergent_failing():
+    assert Sum(sin(n)/n**3, (n, 1, oo)).is_convergent() is S.true
+    assert Sum(ln(n)/n**3, (n, 1, oo)).is_convergent() is S.true
+    # is_decreasing is not handling "is_decreasing(1)", so raises error
+
+    # dirichlet tests
+    assert Sum(sin(n)/n, (n, 1, oo)).is_convergent() is S.true
+    assert Sum(sin(2*n)/n, (n, 1, oo)).is_convergent() is S.true
+
+
+def test_issue_10156():
+    cx = Sum(2*y**2*x, (x, 1,3))
+    e = 2*y*Sum(2*cx*x**2, (x, 1, 9))
+    assert e.factor() == \
+        8*y**3*Sum(x, (x, 1, 3))*Sum(x**2, (x, 1, 9))

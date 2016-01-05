@@ -90,9 +90,9 @@ if PY3:
     from io import StringIO
     cStringIO = StringIO
 
-    exec_ = getattr(builtins, "exec")
+    exec_=getattr(builtins, "exec")
 
-    xrange = range
+    range=range
 else:
     import codecs
     import types
@@ -135,8 +135,7 @@ else:
         elif _locs_ is None:
             _locs_ = _globs_
         exec("exec _code_ in _globs_, _locs_")
-
-    xrange = xrange
+    range=xrange
 
 def with_metaclass(meta, *bases):
     """
@@ -173,14 +172,14 @@ def with_metaclass(meta, *bases):
     <class 'Meta'>
 
     """
+    # This requires a bit of explanation: the basic idea is to make a dummy
+    # metaclass for one level of class instantiation that replaces itself with
+    # the actual metaclass.
+    # Code copied from the 'six' library.
     class metaclass(meta):
-        __call__ = type.__call__
-        __init__ = type.__init__
         def __new__(cls, name, this_bases, d):
-            if this_bases is None:
-                return type.__new__(cls, name, (), d)
             return meta(name, bases, d)
-    return metaclass("NewBase", None, {})
+    return type.__new__(metaclass, "NewBase", (), {})
 
 
 # These are in here because telling if something is an iterable just by calling
@@ -206,6 +205,15 @@ def iterable(i, exclude=(string_types, dict, NotIterable)):
     that the iterable is not a string or a mapping, so those are excluded
     by default. If you want a pure Python definition, make exclude=None. To
     exclude multiple items, pass them as a tuple.
+
+    You can also set the _iterable attribute to True or False on your class,
+    which will override the checks here, including the exclude test.
+
+    As a rule of thumb, some SymPy functions use this to check if they should
+    recursively map over an object. If an object is technically iterable in
+    the Python sense but does not desire this behavior (e.g., because its
+    iteration is not finite, or because iteration might induce an unwanted
+    computation), it should disable it by setting the _iterable attribute to False.
 
     See also: is_sequence
 
@@ -234,6 +242,8 @@ def iterable(i, exclude=(string_types, dict, NotIterable)):
     False
 
     """
+    if hasattr(i, '_iterable'):
+        return i._iterable
     try:
         iter(i)
     except TypeError:
@@ -411,7 +421,7 @@ def default_sort_key(item, order=None):
     Examples
     ========
 
-    >>> from sympy import S, I, default_sort_key
+    >>> from sympy import S, I, default_sort_key, sin, cos, sqrt
     >>> from sympy.core.function import UndefinedFunction
     >>> from sympy.abc import x
 
@@ -489,10 +499,19 @@ def default_sort_key(item, order=None):
     The order of terms obtained when using these keys is the order that would
     be obtained if those terms were *factors* in a product.
 
+    Although it is useful for quickly putting expressions in canonical order,
+    it does not sort expressions based on their complexity defined by the
+    number of operations, power of variables and others:
+
+    >>> sorted([sin(x)*cos(x), sin(x)], key=default_sort_key)
+    [sin(x)*cos(x), sin(x)]
+    >>> sorted([x, x**2, sqrt(x), x**3], key=default_sort_key)
+    [sqrt(x), x, x**2, x**3]
+
     See Also
     ========
 
-    sympy.core.expr.as_ordered_factors, sympy.core.expr.as_ordered_terms
+    ordered, sympy.core.expr.as_ordered_factors, sympy.core.expr.as_ordered_terms
 
     """
 

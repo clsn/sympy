@@ -52,7 +52,7 @@ from sympy.polys.polyconfig import query
 
 from sympy.ntheory import nextprime
 
-from sympy.core.compatibility import xrange
+from sympy.core.compatibility import range
 
 
 def dup_half_gcdex(f, g, K):
@@ -898,6 +898,7 @@ def _dmp_rr_trivial_gcd(f, g, u, K):
     """Handle trivial cases in GCD algorithm over a ring. """
     zero_f = dmp_zero_p(f, u)
     zero_g = dmp_zero_p(g, u)
+    if_contain_one = dmp_one_p(f, u, K) or dmp_one_p(g, u, K)
 
     if zero_f and zero_g:
         return tuple(dmp_zeros(3, u, K))
@@ -911,6 +912,8 @@ def _dmp_rr_trivial_gcd(f, g, u, K):
             return f, dmp_one(u, K), dmp_zero(u)
         else:
             return dmp_neg(f, u, K), dmp_ground(-K.one, u), dmp_zero(u)
+    elif if_contain_one:
+        return dmp_one(u, K), f, g
     elif query('USE_SIMPLIFY_GCD'):
         return _dmp_simplify_gcd(f, g, u, K)
     else:
@@ -1203,7 +1206,7 @@ def dup_zz_heu_gcd(f, g, K):
             2*min(f_norm // abs(dup_LC(f, K)),
                   g_norm // abs(dup_LC(g, K))) + 2)
 
-    for i in xrange(0, HEU_GCD_MAX):
+    for i in range(0, HEU_GCD_MAX):
         ff = dup_eval(f, x, K)
         gg = dup_eval(g, x, K)
 
@@ -1328,7 +1331,7 @@ def dmp_zz_heu_gcd(f, g, u, K):
             2*min(f_norm // abs(dmp_ground_LC(f, u, K)),
                   g_norm // abs(dmp_ground_LC(g, u, K))) + 2)
 
-    for i in xrange(0, HEU_GCD_MAX):
+    for i in range(0, HEU_GCD_MAX):
         ff = dmp_eval(f, x, u, K)
         gg = dmp_eval(g, x, u, K)
 
