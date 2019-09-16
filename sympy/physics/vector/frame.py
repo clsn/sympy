@@ -1,7 +1,9 @@
-from sympy import (diff, trigsimp, expand, sin, cos, solve, Symbol, sympify,
-                   eye, symbols, Dummy, ImmutableMatrix as Matrix)
-from sympy.core.compatibility import string_types, u, range
+from sympy.core.backend import (diff, expand, sin, cos, sympify,
+                   eye, symbols, ImmutableMatrix as Matrix, MatrixBase)
+from sympy import (trigsimp, solve, Symbol, Dummy)
+from sympy.core.compatibility import string_types, range
 from sympy.physics.vector.vector import Vector, _check_vector
+from sympy.utilities.misc import translate
 
 __all__ = ['CoordinateSym', 'ReferenceFrame']
 
@@ -69,7 +71,7 @@ class CoordinateSym(Symbol):
         return False
 
     def __ne__(self, other):
-        return not self.__eq__(other)
+        return not self == other
 
     def __hash__(self):
         return tuple((self._id[0].__hash__(), self._id[1])).__hash__()
@@ -88,6 +90,7 @@ class ReferenceFrame(object):
     vector, defined in another frame.
 
     """
+    _count = 0
 
     def __init__(self, name, indices=None, latexs=None, variables=None):
         """ReferenceFrame initialization method.
@@ -198,6 +201,8 @@ class ReferenceFrame(object):
         self.varlist = (CoordinateSym(variables[0], self, 0), \
                         CoordinateSym(variables[1], self, 1), \
                         CoordinateSym(variables[2], self, 2))
+        ReferenceFrame._count += 1
+        self.index = ReferenceFrame._count
 
     def __getitem__(self, ind):
         """
@@ -206,7 +211,7 @@ class ReferenceFrame(object):
         If the index is a number, returns the coordinate variable correspon-
         -ding to that index.
         """
-        if not isinstance(ind, str):
+        if not isinstance(ind, string_types):
             if ind < 3:
                 return self.varlist[ind]
             else:
@@ -254,13 +259,13 @@ class ReferenceFrame(object):
     def _w_diff_dcm(self, otherframe):
         """Angular velocity from time differentiating the DCM. """
         from sympy.physics.vector.functions import dynamicsymbols
-        dcm2diff = self.dcm(otherframe)
+        dcm2diff = otherframe.dcm(self)
         diffed = dcm2diff.diff(dynamicsymbols._t)
         angvelmat = diffed * dcm2diff.T
         w1 = trigsimp(expand(angvelmat[7]), recursive=True)
         w2 = trigsimp(expand(angvelmat[2]), recursive=True)
         w3 = trigsimp(expand(angvelmat[3]), recursive=True)
-        return -Vector([(Matrix([w1, w2, w3]), self)])
+        return Vector([(Matrix([w1, w2, w3]), otherframe)])
 
     def variable_map(self, otherframe):
         """
@@ -425,19 +430,21 @@ class ReferenceFrame(object):
             defined in relation to.
         rot_type : str
             The type of orientation matrix that is being created. Supported
-            types are 'Body', 'Space', 'Quaternion', and 'Axis'. See examples
-            for correct usage.
+            types are 'Body', 'Space', 'Quaternion', 'Axis', and 'DCM'.
+            See examples for correct usage.
         amounts : list OR value
             The quantities that the orientation matrix will be defined by.
-        rot_order : str
+            In case of rot_type='DCM', value must be a
+            sympy.matrices.MatrixBase object (or subclasses of it).
+        rot_order : str or int
             If applicable, the order of a series of rotations.
 
         Examples
         ========
 
         >>> from sympy.physics.vector import ReferenceFrame, Vector
-        >>> from sympy import symbols
-        >>> q0, q1, q2, q3, q4 = symbols('q0 q1 q2 q3 q4')
+        >>> from sympy import symbols, eye, ImmutableMatrix
+        >>> q0, q1, q2, q3 = symbols('q0 q1 q2 q3')
         >>> N = ReferenceFrame('N')
         >>> B = ReferenceFrame('B')
 
@@ -447,7 +454,7 @@ class ReferenceFrame(object):
         3, expressed in XYZ or 123, and cannot have a rotation about about an
         axis twice in a row.
 
-        >>> B.orient(N, 'Body', [q1, q2, q3], '123')
+        >>> B.orient(N, 'Body', [q1, q2, q3], 123)
         >>> B.orient(N, 'Body', [q1, q2, 0], 'ZXZ')
         >>> B.orient(N, 'Body', [0, 0, 0], 'XYX')
 
@@ -468,20 +475,34 @@ class ReferenceFrame(object):
 
         >>> B.orient(N, 'Quaternion', [q0, q1, q2, q3])
 
-        Last is Axis. This is a rotation about an arbitrary, non-time-varying
+        Next is Axis. This is a rotation about an arbitrary, non-time-varying
         axis by some angle. The axis is supplied as a Vector. This is how
         simple rotations are defined.
 
         >>> B.orient(N, 'Axis', [q1, N.x + 2 * N.y])
 
+        Last is DCM (Direction Cosine Matrix). This is a rotation matrix
+        given manually.
+
+        >>> B.orient(N, 'DCM', eye(3))
+        >>> B.orient(N, 'DCM', ImmutableMatrix([[0, 1, 0], [0, 0, -1], [-1, 0, 0]]))
+
         """
 
         from sympy.physics.vector.functions import dynamicsymbols
         _check_frame(parent)
-        amounts = list(amounts)
-        for i, v in enumerate(amounts):
-            if not isinstance(v, Vector):
-                amounts[i] = sympify(v)
+
+        # Allow passing a rotation matrix manually.
+        if rot_type == 'DCM':
+            # When rot_type == 'DCM', then amounts must be a Matrix type object
+            # (e.g. sympy.matrices.dense.MutableDenseMatrix).
+            if not isinstance(amounts, MatrixBase):
+                raise TypeError("Amounts must be a sympy Matrix type object.")
+        else:
+            amounts = list(amounts)
+            for i, v in enumerate(amounts):
+                if not isinstance(v, Vector):
+                    amounts[i] = sympify(v)
 
         def _rot(axis, angle):
             """DCM for simple axis 1,2,or 3 rotations. """
@@ -500,13 +521,9 @@ class ReferenceFrame(object):
 
         approved_orders = ('123', '231', '312', '132', '213', '321', '121',
                            '131', '212', '232', '313', '323', '')
-        rot_order = str(
-            rot_order).upper()  # Now we need to make sure XYZ = 123
+        # make sure XYZ => 123 and rot_type is in upper case
+        rot_order = translate(str(rot_order), 'XYZxyz', '123123')
         rot_type = rot_type.upper()
-        rot_order = [i.replace('X', '1') for i in rot_order]
-        rot_order = [i.replace('Y', '2') for i in rot_order]
-        rot_order = [i.replace('Z', '3') for i in rot_order]
-        rot_order = ''.join(rot_order)
         if not rot_order in approved_orders:
             raise TypeError('The supplied order is not an approved type')
         parent_orient = []
@@ -553,15 +570,23 @@ class ReferenceFrame(object):
             a3 = int(rot_order[2])
             parent_orient = (_rot(a3, amounts[2]) * _rot(a2, amounts[1])
                     * _rot(a1, amounts[0]))
+        elif rot_type == 'DCM':
+            parent_orient = amounts
         else:
             raise NotImplementedError('That is not an implemented rotation')
         #Reset the _dcm_cache of this frame, and remove it from the _dcm_caches
         #of the frames it is linked to. Also remove it from the _dcm_dict of
         #its parent
         frames = self._dcm_cache.keys()
+        dcm_dict_del = []
+        dcm_cache_del = []
         for frame in frames:
             if frame in self._dcm_dict:
-                del frame._dcm_dict[self]
+                dcm_dict_del += [frame]
+            dcm_cache_del += [frame]
+        for frame in dcm_dict_del:
+            del frame._dcm_dict[self]
+        for frame in dcm_cache_del:
             del frame._dcm_cache[self]
         #Add the dcm relationship to _dcm_dict
         self._dcm_dict = self._dlist[0] = {}
@@ -585,6 +610,8 @@ class ReferenceFrame(object):
         elif rot_type == 'AXIS':
             thetad = (amounts[0]).diff(dynamicsymbols._t)
             wvec = thetad * amounts[1].express(parent).normalize()
+        elif rot_type == 'DCM':
+            wvec = self._w_diff_dcm(parent)
         else:
             try:
                 from sympy.polys.polyerrors import CoercionFailed
@@ -605,8 +632,8 @@ class ReferenceFrame(object):
         parent._ang_vel_dict.update({self: -wvec})
         self._var_dict = {}
 
-    def orientnew(self, newname, rot_type, amounts, rot_order='', variables=None,
-                  indices=None, latexs=None):
+    def orientnew(self, newname, rot_type, amounts, rot_order='',
+                  variables=None, indices=None, latexs=None):
         """Creates a new ReferenceFrame oriented with respect to this Frame.
 
         See ReferenceFrame.orient() for acceptable rotation types, amounts,
@@ -624,27 +651,53 @@ class ReferenceFrame(object):
         rot_order : str
             If applicable, the order of a series of rotations.
 
-
         Examples
         ========
 
         >>> from sympy.physics.vector import ReferenceFrame, Vector
         >>> from sympy import symbols
-        >>> q1 = symbols('q1')
+        >>> q0, q1, q2, q3 = symbols('q0 q1 q2 q3')
         >>> N = ReferenceFrame('N')
+
+        Now we have a choice of how to implement the orientation. First is
+        Body. Body orientation takes this reference frame through three
+        successive simple rotations. Acceptable rotation orders are of length
+        3, expressed in XYZ or 123, and cannot have a rotation about about an
+        axis twice in a row.
+
+        >>> A = N.orientnew('A', 'Body', [q1, q2, q3], '123')
+        >>> A = N.orientnew('A', 'Body', [q1, q2, 0], 'ZXZ')
+        >>> A = N.orientnew('A', 'Body', [0, 0, 0], 'XYX')
+
+        Next is Space. Space is like Body, but the rotations are applied in the
+        opposite order.
+
+        >>> A = N.orientnew('A', 'Space', [q1, q2, q3], '312')
+
+        Next is Quaternion. This orients the new ReferenceFrame with
+        Quaternions, defined as a finite rotation about lambda, a unit vector,
+        by some amount theta.
+        This orientation is described by four parameters:
+        q0 = cos(theta/2)
+        q1 = lambda_x sin(theta/2)
+        q2 = lambda_y sin(theta/2)
+        q3 = lambda_z sin(theta/2)
+        Quaternion does not take in a rotation order.
+
+        >>> A = N.orientnew('A', 'Quaternion', [q0, q1, q2, q3])
+
+        Last is Axis. This is a rotation about an arbitrary, non-time-varying
+        axis by some angle. The axis is supplied as a Vector. This is how
+        simple rotations are defined.
+
         >>> A = N.orientnew('A', 'Axis', [q1, N.x])
-
-
-        .orient() documentation:\n
-        ========================
 
         """
 
-        newframe = self.__class__(newname, variables, indices, latexs)
+        newframe = self.__class__(newname, variables=variables,
+                                  indices=indices, latexs=latexs)
         newframe.orient(self, rot_type, amounts, rot_order)
         return newframe
-
-    orientnew.__doc__ += orient.__doc__
 
     def set_ang_acc(self, otherframe, value):
         """Define the angular acceleration Vector in a ReferenceFrame.

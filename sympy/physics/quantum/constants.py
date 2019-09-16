@@ -4,7 +4,7 @@ from __future__ import print_function, division
 
 from sympy.core.numbers import NumberSymbol
 from sympy.core.singleton import Singleton
-from sympy.core.compatibility import u, with_metaclass
+from sympy.core.compatibility import with_metaclass
 from sympy.printing.pretty.stringpict import prettyForm
 import mpmath.libmp as mlib
 
@@ -30,7 +30,7 @@ class HBar(with_metaclass(Singleton, NumberSymbol)):
     References
     ==========
 
-    .. [1] http://en.wikipedia.org/wiki/Planck_constant
+    .. [1] https://en.wikipedia.org/wiki/Planck_constant
     """
 
     is_real = True

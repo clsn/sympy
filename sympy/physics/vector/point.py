@@ -1,5 +1,5 @@
 from __future__ import print_function, division
-from sympy.core.compatibility import range
+from sympy.core.compatibility import range, string_types
 from .vector import Vector, _check_vector
 from .frame import _check_frame
 
@@ -205,7 +205,7 @@ class Point(object):
 
         """
 
-        if not isinstance(name, str):
+        if not isinstance(name, string_types):
             raise TypeError('Must supply a valid name')
         if value == 0:
             value = Vector(0)
@@ -249,10 +249,10 @@ class Point(object):
         Parameters
         ==========
 
-        value : Vector
-            The vector value of this point's acceleration in the frame
         frame : ReferenceFrame
             The frame in which this point's acceleration is defined
+        value : Vector
+            The vector value of this point's acceleration in the frame
 
         Examples
         ========
@@ -278,10 +278,10 @@ class Point(object):
         Parameters
         ==========
 
+        otherpoint : Point
+            The other point which this point's location is defined relative to
         value : Vector
             The vector which defines the location of this point
-        point : Point
-            The other point which this point's location is defined relative to
 
         Examples
         ========
@@ -309,10 +309,10 @@ class Point(object):
         Parameters
         ==========
 
-        value : Vector
-            The vector value of this point's velocity in the frame
         frame : ReferenceFrame
             The frame in which this point's velocity is defined
+        value : Vector
+            The vector value of this point's velocity in the frame
 
         Examples
         ========
